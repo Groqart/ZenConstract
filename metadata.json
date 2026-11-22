@@ -1,0 +1,6 @@
+{
+  "name": "NexusByte Storefront Studio",
+  "description": "Edge SSR digital storefront platform, 1-click store builder, and crypto checkout simulator for Cloudflare Workers.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
