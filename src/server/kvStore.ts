@@ -41,7 +41,50 @@ const SEED_DATA: PersistedData = {
         avatar_url: '/src/assets/images/avatar_alpha_dev_1795386901545.jpg',
         telegram: 'alphadev_support',
       },
-      sections: DEFAULT_STORE_SECTIONS,
+      sections: [
+        { id: 'sec_header', type: 'header', visible: true },
+        {
+          id: 'sec_trust_seed',
+          type: 'trust_badges',
+          visible: true,
+          trust_badges: {
+            items: [
+              {
+                title: 'Мгновенная выдача в R2',
+                description: 'Защищённая ссылка на архив доступна сразу после 1 подтверждения USDT.',
+              },
+              {
+                title: 'Чистый исходный код',
+                description: 'Каждый скрипт поставляется с документацией, тестами и .env примерами.',
+              },
+              {
+                title: 'Поддержка в Telegram',
+                description: 'Помощь с деплоем на VPS/Cloudflare и бесплатные патч-обновления.',
+              },
+            ],
+          },
+        },
+        { id: 'sec_catalog', type: 'product_grid', visible: true },
+        {
+          id: 'sec_faq_seed',
+          type: 'faq',
+          visible: true,
+          faq: {
+            title: 'Частые вопросы',
+            items: [
+              {
+                question: 'Как происходит доставка цифрового товара после оплаты?',
+                answer: 'Сразу после подтверждения транзакции USDT-TRC20 вы получаете персональную ссылку /download/:token (24 часа, до 5 скачиваний) и копию письма через Resend.',
+              },
+              {
+                question: 'Можно ли обновлять или скрывать товары после публикации?',
+                answer: 'Да, в кабинете продавца можно в любой момент менять цены, порядок секций и видимость отдельных позиций.',
+              },
+            ],
+          },
+        },
+        { id: 'sec_footer', type: 'footer', visible: true },
+      ],
       products: [
         {
           id: 'prod_01',

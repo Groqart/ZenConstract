@@ -112,12 +112,51 @@ export const SLUG_REGEX = /^[a-z0-9-]{3,32}$/;
 export const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 export const TELEGRAM_REGEX = /^[a-zA-Z0-9_]{3,32}$/;
 
-export type StoreSectionType = 'header' | 'product_grid' | 'footer';
+export const MAX_STORE_SECTIONS = 8;
+export const MAX_TRUST_BADGES = 3;
+export const MAX_FAQ_ITEMS = 6;
+
+export type StoreSectionType =
+  | 'header'
+  | 'product_grid'
+  | 'footer'
+  | 'hero_banner'
+  | 'trust_badges'
+  | 'faq';
+
+export interface HeroBannerConfig {
+  headline: string;
+  subheadline: string;
+  cta_label: string;
+  cta_target: string;
+}
+
+export interface TrustBadgeItem {
+  title: string;
+  description: string;
+}
+
+export interface TrustBadgesConfig {
+  items: TrustBadgeItem[];
+}
+
+export interface FaqItem {
+  question: string;
+  answer: string;
+}
+
+export interface FaqSectionConfig {
+  title?: string;
+  items: FaqItem[];
+}
 
 export interface StoreSection {
   id: string;
   type: StoreSectionType;
   visible: boolean;
+  hero_banner?: HeroBannerConfig;
+  trust_badges?: TrustBadgesConfig;
+  faq?: FaqSectionConfig;
 }
 
 export const DEFAULT_STORE_SECTIONS: StoreSection[] = [
@@ -126,27 +165,166 @@ export const DEFAULT_STORE_SECTIONS: StoreSection[] = [
   { id: 'sec_footer', type: 'footer', visible: true },
 ];
 
+export function sanitizeSafeCtaUrl(raw: unknown): string {
+  const trimmed = typeof raw === 'string' ? raw.trim() : '';
+  if (!trimmed) return '#catalog-heading';
+
+  if (trimmed.startsWith('#')) {
+    return /^#[a-zA-Z0-9_-]{1,64}$/.test(trimmed) ? trimmed : '#catalog-heading';
+  }
+
+  if (trimmed.startsWith('/') && !trimmed.startsWith('//')) {
+    return trimmed;
+  }
+
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol === 'https:') {
+      return parsed.toString();
+    }
+    return '#catalog-heading';
+  } catch {
+    return '#catalog-heading';
+  }
+}
+
+export function createDefaultSectionData(type: StoreSectionType): Partial<StoreSection> {
+  if (type === 'hero_banner') {
+    return {
+      hero_banner: {
+        headline: 'Готовые решения для автоматизации без лишних настроек',
+        subheadline: 'Мгновенная выдача архивов после подтверждения USDT и поддержка в Telegram.',
+        cta_label: 'Смотреть каталог',
+        cta_target: '#catalog-heading',
+      },
+    };
+  }
+  if (type === 'trust_badges') {
+    return {
+      trust_badges: {
+        items: [
+          {
+            title: 'Мгновенная выдача',
+            description: 'Ссылка на архив приходит автоматически сразу после 1 подтверждения сети.',
+          },
+          {
+            title: 'Чистый исходный код',
+            description: 'Каждый скрипт поставляется с документацией и проверкой зависимостей.',
+          },
+          {
+            title: 'Поддержка в Telegram',
+            description: 'Помогаем с развёртыванием на сервере и обновлениями после покупки.',
+          },
+        ],
+      },
+    };
+  }
+  if (type === 'faq') {
+    return {
+      faq: {
+        title: 'Частые вопросы',
+        items: [
+          {
+            question: 'Как быстро я получу файлы после оплаты USDT?',
+            answer: 'Ссылка на скачивание из закрытого хранилища R2 появляется сразу на странице инвойса и отправляется на ваш Email.',
+          },
+          {
+            question: 'Сколько раз можно скачать купленный архив?',
+            answer: 'Токен выдачи активен 24 часа и допускает до 5 скачиваний с поддержкой докачки.',
+          },
+        ],
+      },
+    };
+  }
+  return {};
+}
+
+function sanitizeSectionPayload(sec: StoreSection): StoreSection {
+  const base: StoreSection = {
+    id: sec.id,
+    type: sec.type,
+    visible: Boolean(sec.visible),
+  };
+
+  if (sec.type === 'hero_banner') {
+    const hb = sec.hero_banner;
+    base.hero_banner = {
+      headline: String(hb?.headline ?? '').trim().slice(0, 80),
+      subheadline: String(hb?.subheadline ?? '').trim().slice(0, 160),
+      cta_label: String(hb?.cta_label ?? '').trim().slice(0, 40) || 'Перейти к товарам',
+      cta_target: sanitizeSafeCtaUrl(hb?.cta_target),
+    };
+  } else if (sec.type === 'trust_badges') {
+    const rawItems = Array.isArray(sec.trust_badges?.items) ? sec.trust_badges.items : [];
+    base.trust_badges = {
+      items: rawItems.slice(0, MAX_TRUST_BADGES).map((item) => ({
+        title: String(item?.title ?? '').trim().slice(0, 60),
+        description: String(item?.description ?? '').trim().slice(0, 140),
+      })),
+    };
+  } else if (sec.type === 'faq') {
+    const rawItems = Array.isArray(sec.faq?.items) ? sec.faq.items : [];
+    base.faq = {
+      title: String(sec.faq?.title ?? 'Частые вопросы').trim().slice(0, 80) || 'Частые вопросы',
+      items: rawItems.slice(0, MAX_FAQ_ITEMS).map((item) => ({
+        question: String(item?.question ?? '').trim().slice(0, 120),
+        answer: String(item?.answer ?? '').trim().slice(0, 400),
+      })),
+    };
+  }
+
+  return base;
+}
+
 export function normalizeStoreSections(sections?: StoreSection[] | null): StoreSection[] {
   if (!Array.isArray(sections) || sections.length === 0) {
     return DEFAULT_STORE_SECTIONS.map((s) => ({ ...s }));
   }
-  const allowedTypes = new Set<StoreSectionType>(['header', 'product_grid', 'footer']);
-  const valid = sections
-    .filter((s) => s && typeof s.id === 'string' && allowedTypes.has(s.type))
-    .map((s) => ({
-      id: s.id.slice(0, 32),
-      type: s.type,
-      visible: Boolean(s.visible),
-    }));
+
+  const allowedTypes = new Set<StoreSectionType>([
+    'header',
+    'product_grid',
+    'footer',
+    'hero_banner',
+    'trust_badges',
+    'faq',
+  ]);
+
+  const seenIds = new Set<string>();
+  const valid: StoreSection[] = [];
+
+  for (let i = 0; i < sections.length; i += 1) {
+    const raw = sections[i];
+    if (!raw || typeof raw.id !== 'string' || !allowedTypes.has(raw.type)) {
+      continue;
+    }
+    let cleanId = raw.id.trim().slice(0, 40) || `sec_${raw.type}_${i}`;
+    if (seenIds.has(cleanId)) {
+      cleanId = `${cleanId}_${i}`;
+    }
+    seenIds.add(cleanId);
+    valid.push(
+      sanitizeSectionPayload({
+        ...raw,
+        id: cleanId,
+      })
+    );
+  }
+
   if (valid.length === 0) {
     return DEFAULT_STORE_SECTIONS.map((s) => ({ ...s }));
   }
-  for (const def of DEFAULT_STORE_SECTIONS) {
-    if (!valid.some((s) => s.type === def.type)) {
-      valid.push({ ...def });
-    }
+
+  const headerSec = valid.find((s) => s.type === 'header') || { ...DEFAULT_STORE_SECTIONS[0] };
+  const footerSec = valid.find((s) => s.type === 'footer') || { ...DEFAULT_STORE_SECTIONS[2] };
+  const middle = valid.filter((s) => s.type !== 'header' && s.type !== 'footer');
+
+  if (!middle.some((s) => s.type === 'product_grid')) {
+    middle.unshift({ ...DEFAULT_STORE_SECTIONS[1] });
   }
-  return valid;
+
+  const maxMiddle = MAX_STORE_SECTIONS - 2;
+  return [headerSec, ...middle.slice(0, maxMiddle), footerSec];
 }
 
 export interface StoreProduct {
@@ -454,6 +632,57 @@ export function validateStoreInput(
         : 4.2,
     });
   });
+
+  if (Array.isArray(input.sections)) {
+    if (input.sections.length > MAX_STORE_SECTIONS) {
+      errors.sections = `Максимум ${MAX_STORE_SECTIONS} секций на одну витрину.`;
+    }
+    input.sections.slice(0, MAX_STORE_SECTIONS).forEach((sec, secIdx) => {
+      if (!sec || typeof sec !== 'object') return;
+      if (sec.type === 'hero_banner' && sec.hero_banner) {
+        const headline = String(sec.hero_banner.headline || '').trim();
+        const subheadline = String(sec.hero_banner.subheadline || '').trim();
+        const ctaLabel = String(sec.hero_banner.cta_label || '').trim();
+        if (headline.length < 3 || headline.length > 80) {
+          errors[`sections.${secIdx}.headline`] = `Баннер #${secIdx + 1}: заголовок от 3 до 80 символов.`;
+        }
+        if (subheadline.length > 160) {
+          errors[`sections.${secIdx}.subheadline`] = `Баннер #${secIdx + 1}: подзаголовок до 160 символов.`;
+        }
+        if (ctaLabel.length < 1 || ctaLabel.length > 40) {
+          errors[`sections.${secIdx}.cta_label`] = `Баннер #${secIdx + 1}: текст кнопки от 1 до 40 символов.`;
+        }
+      }
+      if (sec.type === 'trust_badges' && sec.trust_badges) {
+        const items = Array.isArray(sec.trust_badges.items) ? sec.trust_badges.items : [];
+        if (items.length > MAX_TRUST_BADGES) {
+          errors[`sections.${secIdx}.trust_badges`] = `Блок преимуществ #${secIdx + 1}: не более ${MAX_TRUST_BADGES} карточек.`;
+        }
+        items.forEach((it, itemIdx) => {
+          if (String(it?.title || '').trim().length > 60) {
+            errors[`sections.${secIdx}.trust_badges.${itemIdx}`] = `Преимущество #${itemIdx + 1}: заголовок до 60 символов.`;
+          }
+          if (String(it?.description || '').trim().length > 140) {
+            errors[`sections.${secIdx}.trust_badges.${itemIdx}.desc`] = `Преимущество #${itemIdx + 1}: описание до 140 символов.`;
+          }
+        });
+      }
+      if (sec.type === 'faq' && sec.faq) {
+        const items = Array.isArray(sec.faq.items) ? sec.faq.items : [];
+        if (items.length > MAX_FAQ_ITEMS) {
+          errors[`sections.${secIdx}.faq`] = `FAQ #${secIdx + 1}: не более ${MAX_FAQ_ITEMS} вопросов.`;
+        }
+        items.forEach((it, itemIdx) => {
+          if (String(it?.question || '').trim().length > 120) {
+            errors[`sections.${secIdx}.faq.${itemIdx}.q`] = `FAQ #${itemIdx + 1}: вопрос до 120 символов.`;
+          }
+          if (String(it?.answer || '').trim().length > 400) {
+            errors[`sections.${secIdx}.faq.${itemIdx}.a`] = `FAQ #${itemIdx + 1}: ответ до 400 символов.`;
+          }
+        });
+      }
+    });
+  }
 
   if (Object.keys(errors).length > 0) {
     return { ok: false, errors };

@@ -1,7 +1,5 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
-  ArrowDown,
-  ArrowUp,
   Check,
   Eye,
   EyeOff,
@@ -23,6 +21,8 @@ import {
   type ThemeMode,
 } from '../worker/storeSchema';
 import type { SellerAccount } from './SellerAuthModal';
+import { SectionBuilderList } from './SectionBuilderList';
+import { StorefrontLivePreview } from './StorefrontLivePreview';
 
 const COVER_GALLERY = [
   {
@@ -52,12 +52,6 @@ const COVER_GALLERY = [
 ];
 
 const DEFAULT_AVATAR = '/src/assets/images/avatar_alpha_dev_1795386901545.jpg';
-
-const SECTION_LABELS: Record<StoreSection['type'], string> = {
-  header: 'Шапка магазина и профиль',
-  product_grid: 'Сетка цифровых товаров',
-  footer: 'Подвал витрины',
-};
 
 interface ProductDraft {
   id?: string;
@@ -389,23 +383,6 @@ export function StoreBuilder({
     setProducts((prev) => prev.filter((_, i) => i !== index));
   }
 
-  function moveSection(index: number, delta: -1 | 1) {
-    const target = index + delta;
-    if (target < 0 || target >= sections.length) return;
-    setSections((prev) => {
-      const next = [...prev];
-      const [item] = next.splice(index, 1);
-      next.splice(target, 0, item);
-      return next;
-    });
-  }
-
-  function toggleSectionVisibility(index: number) {
-    setSections((prev) =>
-      prev.map((sec, i) => (i === index ? { ...sec, visible: !sec.visible } : sec))
-    );
-  }
-
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!authToken) {
@@ -484,8 +461,53 @@ export function StoreBuilder({
     }
   }
 
-  const activePreset = ACCENT_PRESETS[accentPreset];
-  const isDarkPreview = theme === 'dark';
+  const previewStore: StoreConfig = useMemo(
+    () => ({
+      schema_version: 1,
+      store_id: currentUser?.user_id || 'usr_preview',
+      owner_user_id: currentUser?.user_id || 'usr_preview',
+      slug: slug.trim().toLowerCase() || 'preview-shop',
+      created_at: new Date().toISOString(),
+      meta: {
+        title: title.trim() || 'Название вашей витрины',
+        description: description.trim() || 'Краткое описание цифровых товаров и сервисов',
+        accent_preset: accentPreset,
+        theme,
+      },
+      profile: {
+        name: sellerName.trim() || 'Имя продавца',
+        bio: sellerBio.trim() || 'Разрабатываем цифровые продукты и инструменты автоматизации.',
+        avatar_url: avatarUrl || DEFAULT_AVATAR,
+        telegram: telegram.replace(/^@+/, '') || 'support',
+      },
+      sections,
+      products: products.map((p, idx) => ({
+        id: p.id || `prod_${String(idx + 1).padStart(2, '0')}`,
+        is_active: p.is_active,
+        title: p.title.trim() || `Цифровой товар #${idx + 1}`,
+        short_desc: p.short_desc.trim() || 'Краткое описание возможностей продукта.',
+        price_usdt: Number.isFinite(Number(p.price_usdt)) && Number(p.price_usdt) > 0
+          ? Number(p.price_usdt)
+          : 29,
+        cover_url: p.cover_url,
+        category: p.category.trim() || 'Digital Product',
+      })),
+    }),
+    [
+      currentUser?.user_id,
+      slug,
+      title,
+      description,
+      accentPreset,
+      theme,
+      sellerName,
+      sellerBio,
+      avatarUrl,
+      telegram,
+      sections,
+      products,
+    ]
+  );
 
   return (
     <div className="mx-auto max-w-[1360px] px-4 py-8 sm:px-6 lg:px-8">
@@ -518,7 +540,7 @@ export function StoreBuilder({
                 onChange={(e) =>
                   onSelectEditingSlug(e.target.value === '__new__' ? null : e.target.value)
                 }
-                className="min-h-[42px] rounded-lg border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-900 focus:border-indigo-600 focus:outline-none"
+                className="min-h-[42px] max-w-full min-w-0 rounded-lg border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-900 focus:border-indigo-600 focus:outline-none"
               >
                 <option value="__new__">+ Создать новый магазин</option>
                 {ownedStores.map((st) => (
@@ -556,7 +578,7 @@ export function StoreBuilder({
       )}
 
       <div className="grid grid-cols-1 gap-8 lg:grid-cols-12">
-        <form onSubmit={handleSubmit} className="space-y-8 lg:col-span-7" noValidate>
+        <form onSubmit={handleSubmit} className="min-w-0 space-y-8 lg:col-span-7" noValidate>
           {submitError && (
             <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
               <div className="font-semibold">{submitError}</div>
@@ -585,9 +607,9 @@ export function StoreBuilder({
                   disabled={isEditing}
                   onChange={(e) => setSlug(e.target.value)}
                   placeholder="my-scripts"
-                  className="min-h-[44px] flex-1 rounded-l-lg border border-r-0 border-slate-300 px-3.5 font-mono text-sm text-slate-900 focus:border-indigo-600 focus:outline-none disabled:bg-slate-100 disabled:text-slate-500"
+                  className="min-h-[44px] min-w-0 flex-1 rounded-l-lg border border-r-0 border-slate-300 px-3.5 font-mono text-sm text-slate-900 focus:border-indigo-600 focus:outline-none disabled:bg-slate-100 disabled:text-slate-500"
                 />
-                <span className="inline-flex items-center rounded-r-lg border border-slate-300 bg-slate-50 px-3 font-mono text-xs text-slate-600">
+                <span className="inline-flex shrink-0 items-center rounded-r-lg border border-slate-300 bg-slate-50 px-3 font-mono text-xs text-slate-600">
                   .nexusbyte.de5.net
                 </span>
               </div>
@@ -780,63 +802,16 @@ export function StoreBuilder({
             </div>
           </section>
 
-          {/* Section 3: Sections (Sprint 3 Drag-and-Drop Prep) */}
-          <section className="rounded-2xl border border-slate-200 bg-white p-6">
-            <h2 className="text-base font-semibold text-slate-900">
-              3. Структура секций витрины (задел под Drag-and-Drop)
-            </h2>
-            <p className="mt-1 text-xs text-slate-500">
-              Управляйте порядком и видимостью секций <code className="rounded bg-slate-100 px-1">sections[]</code> в StoreConfig.
-            </p>
-            <div className="mt-4 space-y-2">
-              {sections.map((sec, idx) => (
-                <div
-                  key={sec.id}
-                  className="flex flex-col justify-between gap-2.5 rounded-xl border border-slate-200 bg-slate-50/70 px-4 py-3 sm:flex-row sm:items-center sm:gap-3"
-                >
-                  <div className="min-w-0">
-                    <div className="text-sm font-medium text-slate-900">{SECTION_LABELS[sec.type]}</div>
-                    <div className="font-mono text-[11px] text-slate-500">
-                      {sec.id} · {sec.type}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() => moveSection(idx, -1)}
-                      disabled={idx === 0}
-                      aria-label={`Поднять секцию ${SECTION_LABELS[sec.type]}`}
-                      className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-100 disabled:opacity-40"
-                    >
-                      <ArrowUp className="h-3.5 w-3.5" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => moveSection(idx, 1)}
-                      disabled={idx === sections.length - 1}
-                      aria-label={`Опустить секцию ${SECTION_LABELS[sec.type]}`}
-                      className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-100 disabled:opacity-40"
-                    >
-                      <ArrowDown className="h-3.5 w-3.5" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => toggleSectionVisibility(idx)}
-                      aria-label={`Переключить видимость ${SECTION_LABELS[sec.type]}`}
-                      className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium ${
-                        sec.visible
-                          ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
-                          : 'border-slate-200 bg-white text-slate-500'
-                      }`}
-                    >
-                      {sec.visible ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
-                      <span>{sec.visible ? 'Показана' : 'Скрыта'}</span>
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
+          {/* Section 3: Modular Drag-and-Drop Sections */}
+          <SectionBuilderList
+            sections={sections}
+            products={products.map((p, idx) => ({
+              id: p.id || `prod_${String(idx + 1).padStart(2, '0')}`,
+              title: p.title.trim() || `Товар #${idx + 1}`,
+              is_active: p.is_active,
+            }))}
+            onChange={setSections}
+          />
 
           {/* Section 4: Products (1 to 10) */}
           <section className="rounded-2xl border border-slate-200 bg-white p-6">
@@ -1055,86 +1030,25 @@ export function StoreBuilder({
           </button>
         </form>
 
-        {/* Live Preview & Guardrails Column */}
-        <aside className="space-y-6 lg:col-span-5">
+        {/* Live Synchronous Edge SSR Preview & Guardrails Column */}
+        <aside className="min-w-0 space-y-6 lg:col-span-5">
           <div className="sticky top-20 space-y-6">
-            <div className="rounded-2xl border border-slate-200 bg-white p-6">
-              <div className="mb-4 flex items-center justify-between">
-                <h2 className="text-sm font-semibold text-slate-900">Предпросмотр стиля и контраста</h2>
-                <span className="font-mono text-xs text-slate-500">
-                  {slug.trim() ? `${slug.trim().toLowerCase()}.nexusbyte.de5.net` : 'slug.nexusbyte.de5.net'}
-                </span>
-              </div>
-
-              <div
-                className={`rounded-xl border p-5 transition-colors ${
-                  isDarkPreview
-                    ? 'border-slate-800 bg-[#0b0f19] text-slate-100'
-                    : 'border-slate-200 bg-[#f8fafc] text-slate-900'
-                }`}
-              >
-                <div className="flex items-center gap-3.5">
-                  <img
-                    src={avatarUrl || DEFAULT_AVATAR}
-                    alt="Превью аватара"
-                    width={48}
-                    height={48}
-                    referrerPolicy="no-referrer"
-                    className="h-12 w-12 rounded-lg object-cover"
-                  />
-                  <div className="min-w-0">
-                    <div className="truncate text-base font-bold">
-                      {title || 'Название вашей витрины'}
-                    </div>
-                    <div className={`truncate text-xs ${isDarkPreview ? 'text-slate-400' : 'text-slate-500'}`}>
-                      {sellerName || 'Имя продавца'} · @{telegram.replace(/^@+/, '') || 'support'}
-                    </div>
-                  </div>
-                </div>
-
-                <div
-                  className={`mt-4 rounded-xl border p-4 ${
-                    isDarkPreview ? 'border-white/10 bg-[#131a29]' : 'border-slate-200 bg-white'
-                  }`}
-                >
-                  <div
-                    style={{ color: isDarkPreview ? activePreset.softTextDark : activePreset.softTextLight }}
-                    className="text-xs font-semibold"
-                  >
-                    {products[0]?.category || 'Category'}
-                  </div>
-                  <div className="mt-1 text-sm font-semibold">
-                    {products[0]?.title || 'Пример карточки товара'}
-                  </div>
-                  <div className="mt-3 flex items-center justify-between">
-                    <span className="font-mono text-sm font-bold tabular-nums">
-                      {Number(products[0]?.price_usdt || 0).toFixed(2)} USDT
-                    </span>
-                    <span
-                      style={{ backgroundColor: activePreset.hex, color: activePreset.textOnAccent }}
-                      className="inline-flex min-h-[36px] items-center rounded-lg px-3.5 text-xs font-semibold"
-                    >
-                      Купить
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
+            <StorefrontLivePreview previewStore={previewStore} />
 
             <div className="rounded-2xl border border-slate-200 bg-white p-6">
               <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-900">
                 <ShieldAlert className="h-4 w-4 text-indigo-600" />
-                <span>Инфраструктура Спринта 2</span>
+                <span>Архитектура конструктора</span>
               </div>
               <ul className="space-y-2.5 text-xs leading-relaxed text-slate-600">
                 <li>
-                  <strong className="text-slate-900">Два R2-бакета:</strong> публичные картинки кэшируются на CDN, а архивы до 250 МБ грузятся по <code className="rounded bg-slate-100 px-1">Presigned URL</code> в обход лимита Worker 100 МБ.
+                  <strong className="text-slate-900">Единый рендер (Zero-Drift):</strong> живой предпросмотр использует тот же <code className="rounded bg-slate-100 px-1">ssrRenderer</code> в изолированном <code className="rounded bg-slate-100 px-1">iframe</code> с реальным <code className="rounded bg-slate-100 px-1">@media</code> на 375px.
                 </li>
                 <li>
-                  <strong className="text-slate-900">Проверка прав (owner_user_id):</strong> попытка изменить чужой <code className="rounded bg-slate-100 px-1">slug</code> возвращает <code className="rounded bg-slate-100 px-1">403 Forbidden</code>.
+                  <strong className="text-slate-900">Zero-JS FAQ &amp; ссылки:</strong> аккордеон работает на нативном <code className="rounded bg-slate-100 px-1">&lt;details&gt;</code>, а CTA-ссылки проходят строгую проверку протоколов.
                 </li>
                 <li>
-                  <strong className="text-slate-900">Выдача и Resend:</strong> <code className="rounded bg-slate-100 px-1">/download/:token</code> поддерживает <code className="rounded bg-slate-100 px-1">Range</code> (206 Partial Content), лимит 5 скачиваний и идемпотентность по <code className="rounded bg-slate-100 px-1">invoice_id</code>.
+                  <strong className="text-slate-900">Два R2-бакета и права:</strong> архивы до 250 МБ загружаются по <code className="rounded bg-slate-100 px-1">Presigned URL</code>, изменение чужого <code className="rounded bg-slate-100 px-1">slug</code> блокируется (<code className="rounded bg-slate-100 px-1">403</code>).
                 </li>
               </ul>
             </div>

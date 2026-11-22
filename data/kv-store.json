@@ -6,7 +6,7 @@
       "owner_user_id": "usr_98765",
       "slug": "alpha-scripts",
       "created_at": "2026-11-20T10:00:00.000Z",
-      "updated_at": "2026-11-22T23:02:29.984Z",
+      "updated_at": "2026-11-22T23:25:22.944Z",
       "meta": {
         "title": "Alpha Scripts — Боты и автоматизация",
         "description": "Готовые решения для парсинга, арбитража и серверной автоматизации на Python и Node.js",
@@ -26,9 +26,48 @@
           "visible": true
         },
         {
+          "id": "sec_trust_seed",
+          "type": "trust_badges",
+          "visible": true,
+          "trust_badges": {
+            "items": [
+              {
+                "title": "Мгновенная выдача в R2",
+                "description": "Защищённая ссылка на архив доступна сразу после 1 подтверждения USDT."
+              },
+              {
+                "title": "Чистый исходный код",
+                "description": "Каждый скрипт поставляется с документацией, тестами и .env примерами."
+              },
+              {
+                "title": "Поддержка в Telegram",
+                "description": "Помощь с деплоем на VPS/Cloudflare и бесплатные патч-обновления."
+              }
+            ]
+          }
+        },
+        {
           "id": "sec_catalog",
           "type": "product_grid",
           "visible": true
+        },
+        {
+          "id": "sec_faq_seed",
+          "type": "faq",
+          "visible": true,
+          "faq": {
+            "title": "Частые вопросы",
+            "items": [
+              {
+                "question": "Как происходит доставка цифрового товара после оплаты?",
+                "answer": "Сразу после подтверждения транзакции USDT-TRC20 вы получаете персональную ссылку /download/:token (24 часа, до 5 скачиваний) и копию письма через Resend."
+              },
+              {
+                "question": "Можно ли обновлять или скрывать товары после публикации?",
+                "answer": "Да, в кабинете продавца можно в любой момент менять цены, порядок секций и видимость отдельных позиций."
+              }
+            ]
+          }
         },
         {
           "id": "sec_footer",
@@ -243,70 +282,6 @@
       "file_size_mb": 7
     }
   },
-  "invoices": {
-    "invoice:inv_0c8ec38ffe": {
-      "invoice_id": "inv_0c8ec38ffe",
-      "store_id": "usr_98765",
-      "slug": "alpha-scripts",
-      "product_id": "prod_01",
-      "product_title": "Telegram Parser Pro v2.4",
-      "buyer_email": "qa@nexusbyte.de5.net",
-      "amount_usdt": 49,
-      "network": "USDT-TRC20",
-      "payment_address": "T9CC0B4DACABB8586CBD3D3F598NB",
-      "status": "paid",
-      "created_at": "2026-11-22T23:01:05.308Z",
-      "paid_at": "2026-11-22T23:01:05.314Z",
-      "delivery_token": "b283223e2a44e0e90937f386209b534a",
-      "email_dispatched_to": "qa@nexusbyte.de5.net",
-      "email_provider": "resend"
-    },
-    "invoice:inv_7cd401d57d": {
-      "invoice_id": "inv_7cd401d57d",
-      "store_id": "usr_98765",
-      "slug": "alpha-scripts",
-      "product_id": "prod_01",
-      "product_title": "Telegram Parser Pro v2.4",
-      "buyer_email": "buyer@nexusbyte.de5.net",
-      "amount_usdt": 49,
-      "network": "USDT-TRC20",
-      "payment_address": "T3CCDDDF84A61B910C94119C77DNB",
-      "status": "paid",
-      "created_at": "2026-11-22T23:02:26.582Z",
-      "paid_at": "2026-11-22T23:02:26.681Z",
-      "delivery_token": "951246459b318f284e4513488b1ff91b",
-      "email_dispatched_to": "buyer@nexusbyte.de5.net",
-      "email_provider": "resend"
-    }
-  },
-  "tokens": {
-    "token:b283223e2a44e0e90937f386209b534a": {
-      "token": "b283223e2a44e0e90937f386209b534a",
-      "invoice_id": "inv_0c8ec38ffe",
-      "store_id": "usr_98765",
-      "product_id": "prod_01",
-      "product_title": "Telegram Parser Pro v2.4",
-      "buyer_email": "qa@nexusbyte.de5.net",
-      "r2_object_key": "usr_98765/telegram-parser-pro-v2.4.zip",
-      "file_name": "telegram-parser-pro-v2.4.zip",
-      "delivery_note": "Распакуйте архив, заполните .env (API_ID, API_HASH) и запустите python main.py.",
-      "downloads_used": 1,
-      "max_downloads": 5,
-      "expires_at": "2026-11-23T23:01:05.314Z"
-    },
-    "token:951246459b318f284e4513488b1ff91b": {
-      "token": "951246459b318f284e4513488b1ff91b",
-      "invoice_id": "inv_7cd401d57d",
-      "store_id": "usr_98765",
-      "product_id": "prod_01",
-      "product_title": "Telegram Parser Pro v2.4",
-      "buyer_email": "buyer@nexusbyte.de5.net",
-      "r2_object_key": "usr_98765/telegram-parser-pro-v2.4.zip",
-      "file_name": "telegram-parser-pro-v2.4.zip",
-      "delivery_note": "Распакуйте архив, заполните .env (API_ID, API_HASH) и запустите python main.py.",
-      "downloads_used": 0,
-      "max_downloads": 5,
-      "expires_at": "2026-11-23T23:02:26.681Z"
-    }
-  }
+  "invoices": {},
+  "tokens": {}
 }

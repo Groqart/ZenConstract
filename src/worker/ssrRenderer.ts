@@ -2,8 +2,11 @@ import {
   ACCENT_PRESETS,
   CheckoutInvoice,
   StoreConfig,
+  StoreProduct,
+  StoreSection,
   formatProductCountLabel,
   normalizeStoreSections,
+  sanitizeSafeCtaUrl,
   sanitizeSafeUrl,
 } from './storeSchema';
 
@@ -49,7 +52,7 @@ export function renderStorefrontHtml(store: StoreConfig, options: RenderOptions 
       const lazyAttr = index >= 2 ? ' loading="lazy"' : ' fetchpriority="high"';
       const formattedPrice = product.price_usdt.toFixed(2);
       return `
-        <article class="card">
+        <article class="card" id="${escapeHtml(product.id)}">
           <div class="card-media">
             ${
               safeCover
@@ -82,6 +85,92 @@ export function renderStorefrontHtml(store: StoreConfig, options: RenderOptions 
       `;
     })
     .join('');
+
+  function resolveHeroCtaHref(rawTarget: string | undefined): string {
+    const trimmed = String(rawTarget ?? '').trim();
+    if (trimmed && activeProducts.some((p) => p.id === trimmed)) {
+      return `#${trimmed}`;
+    }
+    const safeUrl = sanitizeSafeCtaUrl(trimmed);
+    if (safeUrl.startsWith('#') && safeUrl !== '#catalog-heading') {
+      const targetProdId = safeUrl.slice(1);
+      if (!activeProducts.some((p) => p.id === targetProdId)) {
+        return '#catalog-heading';
+      }
+    }
+    return safeUrl;
+  }
+
+  function renderHeroBanner(sec: StoreSection): string {
+    const hb = sec.hero_banner;
+    const headline = String(hb?.headline ?? '').trim();
+    if (!headline) return '';
+    const subheadline = String(hb?.subheadline ?? '').trim();
+    const ctaLabel = String(hb?.cta_label ?? '').trim() || 'Смотреть каталог';
+    const href = resolveHeroCtaHref(hb?.cta_target);
+    const externalAttrs = href.startsWith('https://')
+      ? ' target="_blank" rel="noopener noreferrer"'
+      : '';
+    return `<section class="hero-banner" aria-label="${escapeHtml(headline)}">
+      <div class="hero-content">
+        <h2 class="hero-title">${escapeHtml(headline)}</h2>
+        ${subheadline ? `<p class="hero-sub">${escapeHtml(subheadline)}</p>` : ''}
+      </div>
+      <a class="hero-cta" href="${escapeHtml(href)}"${externalAttrs}>${escapeHtml(ctaLabel)}</a>
+    </section>`;
+  }
+
+  function renderTrustBadges(sec: StoreSection): string {
+    const rawItems = Array.isArray(sec.trust_badges?.items) ? sec.trust_badges.items : [];
+    const items = rawItems
+      .filter((it) => String(it?.title ?? '').trim() || String(it?.description ?? '').trim())
+      .slice(0, 3);
+    if (items.length === 0) return '';
+
+    const cards = items
+      .map(
+        (item) => `<div class="trust-card">
+          <div class="trust-icon" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg>
+          </div>
+          <div>
+            ${item.title.trim() ? `<h3 class="trust-title">${escapeHtml(item.title)}</h3>` : ''}
+            ${item.description.trim() ? `<p class="trust-desc">${escapeHtml(item.description)}</p>` : ''}
+          </div>
+        </div>`
+      )
+      .join('');
+
+    return `<section class="trust-section" aria-label="Преимущества и гарантии">
+      <div class="trust-grid">${cards}</div>
+    </section>`;
+  }
+
+  function renderFaqSection(sec: StoreSection): string {
+    const rawItems = Array.isArray(sec.faq?.items) ? sec.faq.items : [];
+    const items = rawItems
+      .filter((it) => String(it?.question ?? '').trim() && String(it?.answer ?? '').trim())
+      .slice(0, 6);
+    if (items.length === 0) return '';
+
+    const sectionTitle = String(sec.faq?.title ?? 'Частые вопросы').trim() || 'Частые вопросы';
+    const itemsHtml = items
+      .map(
+        (item) => `<details class="faq-item">
+          <summary class="faq-summary">
+            <span class="faq-q">${escapeHtml(item.question)}</span>
+            <svg class="faq-chevron" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+          </summary>
+          <div class="faq-answer">${escapeHtml(item.answer)}</div>
+        </details>`
+      )
+      .join('');
+
+    return `<section class="faq-section" aria-label="${escapeHtml(sectionTitle)}">
+      <h2 class="section-title" style="margin-bottom:16px;">${escapeHtml(sectionTitle)}</h2>
+      <div class="faq-list">${itemsHtml}</div>
+    </section>`;
+  }
 
   const sections = normalizeStoreSections(store.sections);
   const headerHtml = `<header class="store-header">
@@ -121,9 +210,14 @@ export function renderStorefrontHtml(store: StoreConfig, options: RenderOptions 
     .filter((sec) => sec.visible)
     .map((sec) => {
       if (sec.type === 'header') return headerHtml;
+      if (sec.type === 'hero_banner') return renderHeroBanner(sec);
+      if (sec.type === 'trust_badges') return renderTrustBadges(sec);
       if (sec.type === 'product_grid') return catalogHtml;
-      return footerHtml;
+      if (sec.type === 'faq') return renderFaqSection(sec);
+      if (sec.type === 'footer') return footerHtml;
+      return '';
     })
+    .filter(Boolean)
     .join('\n    ');
 
   return `<!doctype html>
@@ -148,6 +242,7 @@ export function renderStorefrontHtml(store: StoreConfig, options: RenderOptions 
       --soft-text: ${softText};
     }
     *, *::before, *::after { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
     html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; line-height: 1.5; -webkit-font-smoothing: antialiased; }
     img { display: block; max-width: 100%; }
     button, input { font: inherit; }
@@ -165,10 +260,25 @@ export function renderStorefrontHtml(store: StoreConfig, options: RenderOptions 
     .seller-bio { font-size: 0.9375rem; color: var(--text-2); margin: 0; max-width: 64ch; line-height: 1.5; }
     .contact-btn { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; min-width: 44px; padding: 10px 18px; border-radius: 10px; background: var(--muted); color: var(--text); border: 1px solid var(--border); text-decoration: none; font-size: 0.875rem; font-weight: 600; white-space: nowrap; flex-shrink: 0; transition: opacity 150ms ease; }
     .contact-btn:hover { opacity: 0.85; }
+    .hero-banner { display: flex; flex-direction: column; gap: 18px; padding: 24px; border-radius: 14px; background: var(--surface); border: 1px solid var(--border); margin-bottom: 28px; }
+    @media (min-width: 768px) { .hero-banner { flex-direction: row; align-items: center; justify-content: space-between; padding: 30px 32px; margin-bottom: 32px; } }
+    .hero-content { max-width: 64ch; min-width: 0; }
+    .hero-title { margin: 0 0 8px; font-size: clamp(1.25rem, 2.4vw, 1.625rem); font-weight: 700; letter-spacing: -0.02em; line-height: 1.25; text-wrap: balance; }
+    .hero-sub { margin: 0; font-size: 0.9375rem; color: var(--text-2); line-height: 1.5; }
+    .hero-cta { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 11px 22px; border-radius: 10px; background: var(--accent); color: var(--on-accent); text-decoration: none; font-size: 0.9375rem; font-weight: 600; white-space: nowrap; flex-shrink: 0; transition: background-color 150ms ease; }
+    .hero-cta:hover { background: var(--accent-hover); }
+    .trust-section { margin-bottom: 28px; }
+    @media (min-width: 768px) { .trust-section { margin-bottom: 32px; } }
+    .trust-grid { display: grid; grid-template-columns: 1fr; gap: 14px; }
+    @media (min-width: 720px) { .trust-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; } }
+    .trust-card { display: flex; align-items: flex-start; gap: 12px; padding: 16px 18px; border-radius: 12px; background: var(--surface); border: 1px solid var(--border); }
+    .trust-icon { width: 34px; height: 34px; border-radius: 8px; background: var(--soft-bg); color: var(--soft-text); display: grid; place-items: center; flex-shrink: 0; }
+    .trust-title { margin: 0 0 4px; font-size: 0.9375rem; font-weight: 600; line-height: 1.3; }
+    .trust-desc { margin: 0; font-size: 0.8125rem; color: var(--text-2); line-height: 1.45; }
     .section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 18px; }
     .section-title { margin: 0; font-size: 1.125rem; font-weight: 600; }
     .section-count { font-size: 0.875rem; color: var(--text-2); font-variant-numeric: tabular-nums; }
-    .grid { display: grid; grid-template-columns: 1fr; gap: 20px; }
+    .grid { display: grid; grid-template-columns: 1fr; gap: 20px; margin-bottom: 32px; }
     @media (min-width: 680px) { .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
     @media (min-width: 1024px) { .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; } }
     .card { display: flex; flex-direction: column; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; transition: transform 160ms cubic-bezier(0.16,1,0.3,1); }
@@ -186,7 +296,15 @@ export function renderStorefrontHtml(store: StoreConfig, options: RenderOptions 
     .price-unit { font-size: 0.75rem; font-weight: 600; color: var(--text-2); }
     .buy-btn { min-height: 44px; min-width: 104px; padding: 10px 18px; border: 0; border-radius: 10px; background: var(--accent); color: var(--on-accent); font-size: 0.9375rem; font-weight: 600; cursor: pointer; white-space: nowrap; transition: background-color 150ms ease; }
     .buy-btn:hover { background: var(--accent-hover); }
-    .buy-btn:focus-visible, .contact-btn:focus-visible, .modal-close:focus-visible, .submit-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .buy-btn:focus-visible, .contact-btn:focus-visible, .hero-cta:focus-visible, .faq-summary:focus-visible, .modal-close:focus-visible, .submit-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .faq-section { margin-bottom: 32px; }
+    .faq-list { display: flex; flex-direction: column; gap: 10px; }
+    .faq-item { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+    .faq-summary { list-style: none; min-height: 44px; padding: 14px 18px; display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 0.9375rem; font-weight: 600; cursor: pointer; }
+    .faq-summary::-webkit-details-marker { display: none; }
+    .faq-chevron { flex-shrink: 0; color: var(--text-2); transition: transform 180ms ease; }
+    details[open] .faq-chevron { transform: rotate(180deg); }
+    .faq-answer { padding: 0 18px 16px; font-size: 0.875rem; color: var(--text-2); line-height: 1.55; border-top: 1px solid var(--border); padding-top: 12px; }
     dialog.checkout-modal { width: min(440px, calc(100vw - 32px)); border: 1px solid var(--border); border-radius: 16px; background: var(--surface); color: var(--text); padding: 24px; box-shadow: 0 24px 64px rgba(0,0,0,0.36); }
     dialog.checkout-modal::backdrop { background: rgba(2, 6, 23, 0.72); backdrop-filter: blur(4px); }
     .modal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
@@ -202,7 +320,7 @@ export function renderStorefrontHtml(store: StoreConfig, options: RenderOptions 
     .error-msg.visible { display: block; }
     .submit-btn { width: 100%; min-height: 46px; border: 0; border-radius: 10px; background: var(--accent); color: var(--on-accent); font-size: 0.9375rem; font-weight: 600; cursor: pointer; }
     .submit-btn:disabled { opacity: 0.6; cursor: wait; }
-    .site-footer { margin-top: 48px; padding-top: 20px; border-top: 1px solid var(--border); display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; font-size: 0.8125rem; color: var(--text-2); }
+    .site-footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid var(--border); display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; font-size: 0.8125rem; color: var(--text-2); }
     .site-footer a { color: var(--text-2); text-decoration: none; }
     .site-footer a:hover { text-decoration: underline; }
   </style>

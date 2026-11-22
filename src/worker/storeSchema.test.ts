@@ -5,11 +5,13 @@ import {
   extractSlugFromHost,
   formatProductCountLabel,
   normalizeStoreSections,
+  sanitizeSafeCtaUrl,
   sanitizeSafeUrl,
   sanitizeTelegramHandle,
   validateCheckoutRequest,
   validateSlug,
   validateStoreInput,
+  type StoreSection,
 } from './storeSchema';
 
 test('validateSlug accepts valid lowercase alphanumeric hyphenated slugs', () => {
@@ -57,24 +59,111 @@ test('sanitizeSafeUrl blocks javascript and data schemes and allows /cdn/ paths'
   assert.equal(sanitizeSafeUrl('/cdn/usr_98765/1234.webp'), '/cdn/usr_98765/1234.webp');
 });
 
+test('sanitizeSafeCtaUrl enforces https://, /, # allowlist and resets dangerous schemes', () => {
+  assert.equal(sanitizeSafeCtaUrl('javascript:alert(1)'), '#catalog-heading');
+  assert.equal(sanitizeSafeCtaUrl('  JaVaScRiPt:alert(1)'), '#catalog-heading');
+  assert.equal(sanitizeSafeCtaUrl('data:text/html,<script>alert(1)</script>'), '#catalog-heading');
+  assert.equal(sanitizeSafeCtaUrl('//evil.example/phish'), '#catalog-heading');
+  assert.equal(sanitizeSafeCtaUrl('#prod_01'), '#prod_01');
+  assert.equal(sanitizeSafeCtaUrl('/s/demo'), '/s/demo');
+  assert.equal(sanitizeSafeCtaUrl('https://t.me/alphadev'), 'https://t.me/alphadev');
+});
+
 test('sanitizeTelegramHandle strips leading @ and rejects invalid handles', () => {
   assert.equal(sanitizeTelegramHandle('@alphadev_support'), 'alphadev_support');
   assert.equal(sanitizeTelegramHandle('alphadev_support'), 'alphadev_support');
   assert.equal(sanitizeTelegramHandle('bad handle!'), null);
 });
 
-test('normalizeStoreSections migrates missing sections and preserves custom order and visibility', () => {
+test('normalizeStoreSections migrates legacy undefined/empty configs and pins header/footer', () => {
   assert.deepEqual(normalizeStoreSections(undefined), DEFAULT_STORE_SECTIONS);
+  assert.deepEqual(normalizeStoreSections([]), DEFAULT_STORE_SECTIONS);
+
   const custom = normalizeStoreSections([
     { id: 'sec_catalog', type: 'product_grid', visible: true },
     { id: 'sec_header', type: 'header', visible: false },
   ]);
   assert.equal(custom.length, 3);
-  assert.equal(custom[0].type, 'product_grid');
-  assert.equal(custom[1].type, 'header');
-  assert.equal(custom[1].visible, false);
+  assert.equal(custom[0].type, 'header');
+  assert.equal(custom[0].visible, false);
+  assert.equal(custom[1].type, 'product_grid');
   assert.equal(custom[2].type, 'footer');
   assert.equal(custom[2].visible, true);
+});
+
+test('normalizeStoreSections ignores unknown block types and deduplicates IDs', () => {
+  const unknown: StoreSection[] = [
+    { id: 'sec_header', type: 'header', visible: true },
+    { id: 'sec_future', type: 'future_block' as StoreSection['type'], visible: true },
+    { id: 'sec_catalog', type: 'product_grid', visible: true },
+    { id: 'sec_faq', type: 'faq', visible: true, faq: { items: [{ question: 'Q', answer: 'A' }] } },
+    { id: 'sec_faq', type: 'faq', visible: true, faq: { items: [{ question: 'Q2', answer: 'A2' }] } },
+    { id: 'sec_footer', type: 'footer', visible: true },
+  ];
+  const normalized = normalizeStoreSections(unknown);
+  assert.equal(normalized.some((s) => (s.type as string) === 'future_block'), false);
+  assert.equal(new Set(normalized.map((s) => s.id)).size, normalized.length);
+});
+
+test('validateStoreInput rejects >8 sections and >6 FAQ items', () => {
+  const basePayload = {
+    slug: 'limit-test',
+    meta: {
+      title: 'Limit Shop',
+      description: 'Testing limits in Sprint 3',
+      accent_preset: 'indigo' as const,
+      theme: 'dark' as const,
+    },
+    profile: {
+      name: 'Dev Seller',
+      bio: 'Building tools for edge.',
+      avatar_url: '/src/assets/images/avatar.jpg',
+      telegram: '@devseller',
+    },
+    products: [
+      {
+        title: 'Tool 1',
+        short_desc: 'Fast tool for automation.',
+        price_usdt: 25,
+        cover_url: '/src/assets/images/cover.jpg',
+        category: 'Bots',
+        r2_object_key: 'usr_123/tool1.zip',
+      },
+    ],
+  };
+
+  const nineSections: StoreSection[] = [
+    { id: 'sec_header', type: 'header', visible: true },
+    ...Array.from({ length: 6 }, (_, i) => ({
+      id: `sec_faq_${i}`,
+      type: 'faq' as const,
+      visible: true,
+      faq: { title: 'FAQ', items: [{ question: 'Q?', answer: 'A.' }] },
+    })),
+    { id: 'sec_catalog', type: 'product_grid', visible: true },
+    { id: 'sec_footer', type: 'footer', visible: true },
+  ];
+  const resTooManySections = validateStoreInput({ ...basePayload, sections: nineSections });
+  assert.equal(resTooManySections.ok, false);
+  assert.ok(resTooManySections.errors.sections);
+
+  const sevenFaqSections: StoreSection[] = [
+    { id: 'sec_header', type: 'header', visible: true },
+    { id: 'sec_catalog', type: 'product_grid', visible: true },
+    {
+      id: 'sec_faq_1',
+      type: 'faq',
+      visible: true,
+      faq: {
+        title: 'FAQ',
+        items: Array.from({ length: 7 }, (_, i) => ({ question: `Q${i}`, answer: `A${i}` })),
+      },
+    },
+    { id: 'sec_footer', type: 'footer', visible: true },
+  ];
+  const resTooManyFaq = validateStoreInput({ ...basePayload, sections: sevenFaqSections });
+  assert.equal(resTooManyFaq.ok, false);
+  assert.ok(Object.keys(resTooManyFaq.errors).some((k) => k.includes('.faq')));
 });
 
 test('validateStoreInput binds owner_user_id, preserves is_active, and separates private delivery keys', () => {

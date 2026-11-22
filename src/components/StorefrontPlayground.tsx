@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { ExternalLink, Monitor, Smartphone } from 'lucide-react';
+import { ChevronDown, ExternalLink, Monitor, ShieldCheck, Smartphone } from 'lucide-react';
 import {
   ACCENT_PRESETS,
   formatProductCountLabel,
   normalizeStoreSections,
+  sanitizeSafeCtaUrl,
   type StoreConfig,
   type StoreProduct,
 } from '../worker/storeSchema';
@@ -242,11 +243,107 @@ export function StorefrontPlayground({
                     );
                   }
 
+                  if (sec.type === 'hero_banner') {
+                    const hb = sec.hero_banner;
+                    const headline = String(hb?.headline || '').trim();
+                    if (!headline) return null;
+                    const subheadline = String(hb?.subheadline || '').trim();
+                    const ctaLabel = String(hb?.cta_label || '').trim() || 'Смотреть каталог';
+                    const rawTarget = String(hb?.cta_target || '').trim();
+                    let href = activeProducts.some((p) => p.id === rawTarget)
+                      ? `#${rawTarget}`
+                      : sanitizeSafeCtaUrl(rawTarget);
+                    if (href.startsWith('#') && href !== '#catalog-heading') {
+                      const prodId = href.slice(1);
+                      if (!activeProducts.some((p) => p.id === prodId)) {
+                        href = '#catalog-heading';
+                      }
+                    }
+                    const isExternal = href.startsWith('https://');
+                    return (
+                      <section
+                        key={sec.id}
+                        aria-label={headline}
+                        className={`mb-8 flex flex-col gap-4 rounded-2xl border p-6 ${
+                          viewport === 'desktop' ? 'md:flex-row md:items-center md:justify-between md:p-7' : ''
+                        } ${
+                          isDark ? 'border-white/10 bg-[#131a29]' : 'border-slate-200 bg-white'
+                        }`}
+                      >
+                        <div className="min-w-0 max-w-2xl">
+                          <h2 className="text-balance text-xl font-bold tracking-tight sm:text-2xl">
+                            {headline}
+                          </h2>
+                          {subheadline && (
+                            <p className={`mt-2 text-sm leading-relaxed ${isDark ? 'text-slate-300' : 'text-slate-600'}`}>
+                              {subheadline}
+                            </p>
+                          )}
+                        </div>
+                        <a
+                          href={href}
+                          target={isExternal ? '_blank' : undefined}
+                          rel={isExternal ? 'noopener noreferrer' : undefined}
+                          style={{ backgroundColor: accent.hex, color: accent.textOnAccent }}
+                          className="inline-flex min-h-[44px] shrink-0 items-center justify-center whitespace-nowrap rounded-xl px-5 py-2.5 text-sm font-semibold transition-opacity hover:opacity-90"
+                        >
+                          {ctaLabel}
+                        </a>
+                      </section>
+                    );
+                  }
+
+                  if (sec.type === 'trust_badges') {
+                    const items = (sec.trust_badges?.items || [])
+                      .filter((it) => it.title.trim() || it.description.trim())
+                      .slice(0, 3);
+                    if (items.length === 0) return null;
+                    return (
+                      <section key={sec.id} aria-label="Преимущества и гарантии" className="mb-8">
+                        <div
+                          className={`grid gap-4 ${
+                            viewport === 'mobile' ? 'grid-cols-1' : 'grid-cols-1 md:grid-cols-3'
+                          }`}
+                        >
+                          {items.map((item, itemIdx) => (
+                            <div
+                              key={itemIdx}
+                              className={`flex items-start gap-3 rounded-xl border p-4 ${
+                                isDark ? 'border-white/10 bg-[#131a29]' : 'border-slate-200 bg-white'
+                              }`}
+                            >
+                              <div
+                                style={{
+                                  backgroundColor: isDark ? accent.softBgDark : accent.softBgLight,
+                                  color: isDark ? accent.softTextDark : accent.softTextLight,
+                                }}
+                                className="grid h-9 w-9 shrink-0 place-items-center rounded-lg"
+                                aria-hidden="true"
+                              >
+                                <ShieldCheck className="h-4 w-4" />
+                              </div>
+                              <div className="min-w-0">
+                                {item.title.trim() && (
+                                  <h3 className="text-sm font-semibold leading-snug">{item.title}</h3>
+                                )}
+                                {item.description.trim() && (
+                                  <p className={`mt-1 text-xs leading-relaxed ${isDark ? 'text-slate-400' : 'text-slate-600'}`}>
+                                    {item.description}
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </section>
+                    );
+                  }
+
                   if (sec.type === 'product_grid') {
                     return (
-                      <section key={sec.id} aria-labelledby="storefront-catalog-title">
+                      <section key={sec.id} aria-labelledby="catalog-heading" className="mb-8">
                         <div className="mb-5 flex items-baseline justify-between gap-4">
-                          <h2 id="storefront-catalog-title" className="text-lg font-semibold">
+                          <h2 id="catalog-heading" className="text-lg font-semibold">
                             Цифровые товары
                           </h2>
                           <span className={`text-sm tabular-nums ${isDark ? 'text-slate-400' : 'text-slate-500'}`}>
@@ -264,6 +361,7 @@ export function StorefrontPlayground({
                           {activeProducts.map((product, index) => (
                             <article
                               key={product.id}
+                              id={product.id}
                               className={`flex flex-col overflow-hidden rounded-2xl border transition-transform duration-150 hover:-translate-y-0.5 ${
                                 isDark
                                   ? 'border-white/10 bg-[#131a29]'
@@ -337,10 +435,45 @@ export function StorefrontPlayground({
                     );
                   }
 
+                  if (sec.type === 'faq') {
+                    const items = (sec.faq?.items || [])
+                      .filter((it) => it.question.trim() && it.answer.trim())
+                      .slice(0, 6);
+                    if (items.length === 0) return null;
+                    const faqTitle = sec.faq?.title?.trim() || 'Частые вопросы';
+                    return (
+                      <section key={sec.id} aria-label={faqTitle} className="mb-8">
+                        <h2 className="mb-4 text-lg font-semibold">{faqTitle}</h2>
+                        <div className="space-y-2.5">
+                          {items.map((item, itemIdx) => (
+                            <details
+                              key={itemIdx}
+                              className={`group rounded-xl border ${
+                                isDark ? 'border-white/10 bg-[#131a29]' : 'border-slate-200 bg-white'
+                              }`}
+                            >
+                              <summary className="flex min-h-[44px] cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-semibold [&::-webkit-details-marker]:hidden">
+                                <span>{item.question}</span>
+                                <ChevronDown className="h-4 w-4 shrink-0 text-slate-400 transition-transform group-open:rotate-180" />
+                              </summary>
+                              <div
+                                className={`border-t px-4 py-3 text-sm leading-relaxed ${
+                                  isDark ? 'border-white/10 text-slate-300' : 'border-slate-200 text-slate-600'
+                                }`}
+                              >
+                                {item.answer}
+                              </div>
+                            </details>
+                          ))}
+                        </div>
+                      </section>
+                    );
+                  }
+
                   return (
                     <footer
                       key={sec.id}
-                      className={`mt-12 flex flex-wrap items-center justify-between gap-4 border-t pt-5 text-xs ${
+                      className={`mt-10 flex flex-wrap items-center justify-between gap-4 border-t pt-5 text-xs ${
                         isDark ? 'border-white/10 text-slate-400' : 'border-slate-200 text-slate-500'
                       }`}
                     >
