@@ -3,6 +3,7 @@ import { TopBar, type ActiveTab } from './components/TopBar';
 import { StorefrontPlayground } from './components/StorefrontPlayground';
 import { StoreBuilder } from './components/StoreBuilder';
 import { ArchitectureInspector } from './components/ArchitectureInspector';
+import { SellerAuthModal, type SellerAccount } from './components/SellerAuthModal';
 import type { StoreConfig } from './worker/storeSchema';
 
 export default function App() {
@@ -11,6 +12,12 @@ export default function App() {
   const [selectedSlug, setSelectedSlug] = useState<string>('alpha-scripts');
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+
+  // Seller Bearer token kept strictly in React JS memory (never localStorage)
+  const [authToken, setAuthToken] = useState<string | null>(null);
+  const [currentUser, setCurrentUser] = useState<SellerAccount | null>(null);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [editingSlug, setEditingSlug] = useState<string | null>(null);
 
   const loadStores = useCallback(async (preferSlug?: string) => {
     setLoadError(null);
@@ -37,15 +44,46 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  function handleStorePublished(newStore: StoreConfig) {
-    setStores((prev) => [newStore, ...prev.filter((s) => s.slug !== newStore.slug)]);
-    setSelectedSlug(newStore.slug);
+  const ownedStores = currentUser
+    ? stores.filter((s) => s.owner_user_id === currentUser.user_id)
+    : [];
+
+  function handleAuthenticated(token: string, user: SellerAccount, userStores: StoreConfig[]) {
+    setAuthToken(token);
+    setCurrentUser(user);
+    if (userStores.length > 0) {
+      setEditingSlug(userStores[0].slug);
+    } else {
+      setEditingSlug(null);
+    }
+  }
+
+  function handleLogout() {
+    setAuthToken(null);
+    setCurrentUser(null);
+    setEditingSlug(null);
+  }
+
+  function handleStorePublished(savedStore: StoreConfig) {
+    setStores((prev) => [savedStore, ...prev.filter((s) => s.slug !== savedStore.slug)]);
+    setSelectedSlug(savedStore.slug);
+    setEditingSlug(savedStore.slug);
     setActiveTab('storefront');
+  }
+
+  function handleEditStore(slug: string) {
+    setEditingSlug(slug);
+    setActiveTab('builder');
   }
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
-      <TopBar activeTab={activeTab} onSelectTab={setActiveTab} />
+      <TopBar
+        activeTab={activeTab}
+        onSelectTab={setActiveTab}
+        currentUser={currentUser}
+        onOpenAuthModal={() => setAuthModalOpen(true)}
+      />
 
       <main>
         {loading ? (
@@ -74,7 +112,15 @@ export default function App() {
               />
             )}
             {activeTab === 'builder' && (
-              <StoreBuilder onStorePublished={handleStorePublished} />
+              <StoreBuilder
+                authToken={authToken}
+                currentUser={currentUser}
+                ownedStores={ownedStores}
+                editingSlug={editingSlug}
+                onSelectEditingSlug={setEditingSlug}
+                onRequireAuth={() => setAuthModalOpen(true)}
+                onStorePublished={handleStorePublished}
+              />
             )}
             {activeTab === 'architecture' && (
               <ArchitectureInspector
@@ -86,6 +132,16 @@ export default function App() {
           </>
         )}
       </main>
+
+      <SellerAuthModal
+        open={authModalOpen}
+        currentUser={currentUser}
+        ownedStores={ownedStores}
+        onClose={() => setAuthModalOpen(false)}
+        onAuthenticated={handleAuthenticated}
+        onLogout={handleLogout}
+        onEditStore={handleEditStore}
+      />
     </div>
   );
 }

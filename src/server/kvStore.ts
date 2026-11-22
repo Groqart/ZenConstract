@@ -1,11 +1,13 @@
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import type {
-  CheckoutInvoice,
-  DeliverySecret,
-  DeliveryTokenRecord,
-  StoreConfig,
+import {
+  DEFAULT_STORE_SECTIONS,
+  normalizeStoreSections,
+  type CheckoutInvoice,
+  type DeliverySecret,
+  type DeliveryTokenRecord,
+  type StoreConfig,
 } from '../worker/storeSchema';
 
 interface PersistedData {
@@ -23,8 +25,10 @@ const SEED_DATA: PersistedData = {
     'store:alpha-scripts': {
       schema_version: 1,
       store_id: 'usr_98765',
+      owner_user_id: 'usr_98765',
       slug: 'alpha-scripts',
       created_at: '2026-11-20T10:00:00.000Z',
+      updated_at: '2026-11-20T10:00:00.000Z',
       meta: {
         title: 'Alpha Scripts — Боты и автоматизация',
         description: 'Готовые решения для парсинга, арбитража и серверной автоматизации на Python и Node.js',
@@ -37,6 +41,7 @@ const SEED_DATA: PersistedData = {
         avatar_url: '/src/assets/images/avatar_alpha_dev_1795386901545.jpg',
         telegram: 'alphadev_support',
       },
+      sections: DEFAULT_STORE_SECTIONS,
       products: [
         {
           id: 'prod_01',
@@ -97,8 +102,10 @@ const SEED_DATA: PersistedData = {
     'store:kinetix-ui': {
       schema_version: 1,
       store_id: 'usr_44120',
+      owner_user_id: 'usr_44120',
       slug: 'kinetix-ui',
       created_at: '2026-11-21T08:30:00.000Z',
+      updated_at: '2026-11-21T08:30:00.000Z',
       meta: {
         title: 'Kinetix Systems — Edge Шаблоны',
         description: 'Чистые шаблоны на Cloudflare Workers, D1 и Zero-JS интерфейсы с PageSpeed 99',
@@ -111,6 +118,7 @@ const SEED_DATA: PersistedData = {
         avatar_url: '/src/assets/images/avatar_alpha_dev_1795386901545.jpg',
         telegram: 'kinetix_lab',
       },
+      sections: DEFAULT_STORE_SECTIONS,
       products: [
         {
           id: 'prod_01',
@@ -147,7 +155,7 @@ const SEED_DATA: PersistedData = {
       key: 'delivery:usr_98765:prod_01',
       store_id: 'usr_98765',
       product_id: 'prod_01',
-      r2_object_key: 'r2://nexusbyte-private/usr_98765/telegram-parser-pro-v2.4.zip',
+      r2_object_key: 'usr_98765/telegram-parser-pro-v2.4.zip',
       delivery_note: 'Распакуйте архив, заполните .env (API_ID, API_HASH) и запустите python main.py.',
       file_name: 'telegram-parser-pro-v2.4.zip',
       file_size_mb: 6.4,
@@ -156,7 +164,7 @@ const SEED_DATA: PersistedData = {
       key: 'delivery:usr_98765:prod_02',
       store_id: 'usr_98765',
       product_id: 'prod_02',
-      r2_object_key: 'r2://nexusbyte-private/usr_98765/dex-liquidity-sniper-cli.zip',
+      r2_object_key: 'usr_98765/dex-liquidity-sniper-cli.zip',
       delivery_note: 'Укажите RPC-эндпоинт в config.toml и протестируйте в dry-run режиме.',
       file_name: 'dex-liquidity-sniper-cli.zip',
       file_size_mb: 11.2,
@@ -165,7 +173,7 @@ const SEED_DATA: PersistedData = {
       key: 'delivery:usr_98765:prod_03',
       store_id: 'usr_98765',
       product_id: 'prod_03',
-      r2_object_key: 'r2://nexusbyte-private/usr_98765/residential-proxy-rotator.zip',
+      r2_object_key: 'usr_98765/residential-proxy-rotator.zip',
       delivery_note: 'Docker Compose манифест и бинарник балансировщика внутри архива.',
       file_name: 'residential-proxy-rotator.zip',
       file_size_mb: 8.1,
@@ -174,7 +182,7 @@ const SEED_DATA: PersistedData = {
       key: 'delivery:usr_98765:prod_04',
       store_id: 'usr_98765',
       product_id: 'prod_04',
-      r2_object_key: 'r2://nexusbyte-private/usr_98765/discord-guard-automod.zip',
+      r2_object_key: 'usr_98765/discord-guard-automod.zip',
       delivery_note: 'Добавьте токен бота и импортируйте правила модерации из rules.json.',
       file_name: 'discord-guard-automod.zip',
       file_size_mb: 3.7,
@@ -183,7 +191,7 @@ const SEED_DATA: PersistedData = {
       key: 'delivery:usr_98765:prod_05',
       store_id: 'usr_98765',
       product_id: 'prod_05',
-      r2_object_key: 'r2://nexusbyte-private/usr_98765/stealth-playwright-sdk.zip',
+      r2_object_key: 'usr_98765/stealth-playwright-sdk.zip',
       delivery_note: 'Выполните npm install && npm run demo для проверки профиля браузера.',
       file_name: 'stealth-playwright-sdk.zip',
       file_size_mb: 5.5,
@@ -192,7 +200,7 @@ const SEED_DATA: PersistedData = {
       key: 'delivery:usr_98765:prod_06',
       store_id: 'usr_98765',
       product_id: 'prod_06',
-      r2_object_key: 'r2://nexusbyte-private/usr_98765/crypto-webhook-relay.zip',
+      r2_object_key: 'usr_98765/crypto-webhook-relay.zip',
       delivery_note: 'Разверните через wrangler deploy и задайте секрет WEBHOOK_HMAC_SECRET.',
       file_name: 'crypto-webhook-relay.zip',
       file_size_mb: 2.9,
@@ -201,7 +209,7 @@ const SEED_DATA: PersistedData = {
       key: 'delivery:usr_44120:prod_01',
       store_id: 'usr_44120',
       product_id: 'prod_01',
-      r2_object_key: 'r2://nexusbyte-private/usr_44120/edge-ssr-starter-pack.zip',
+      r2_object_key: 'usr_44120/edge-ssr-starter-pack.zip',
       delivery_note: 'Содержит 6 готовых SSR-шаблонов под Cloudflare Workers.',
       file_name: 'edge-ssr-starter-pack.zip',
       file_size_mb: 4.1,
@@ -210,7 +218,7 @@ const SEED_DATA: PersistedData = {
       key: 'delivery:usr_44120:prod_02',
       store_id: 'usr_44120',
       product_id: 'prod_02',
-      r2_object_key: 'r2://nexusbyte-private/usr_44120/r2-signed-delivery-kit.zip',
+      r2_object_key: 'usr_44120/r2-signed-delivery-kit.zip',
       delivery_note: 'Готовый обработчик вебхуков + шаблон письма Resend.',
       file_name: 'r2-signed-delivery-kit.zip',
       file_size_mb: 3.3,
@@ -219,7 +227,7 @@ const SEED_DATA: PersistedData = {
       key: 'delivery:usr_44120:prod_03',
       store_id: 'usr_44120',
       product_id: 'prod_03',
-      r2_object_key: 'r2://nexusbyte-private/usr_44120/multi-pool-proxy-bridge.zip',
+      r2_object_key: 'usr_44120/multi-pool-proxy-bridge.zip',
       delivery_note: 'Инструкция по настройке Durable Objects и маршрутизации.',
       file_name: 'multi-pool-proxy-bridge.zip',
       file_size_mb: 7.0,
@@ -236,14 +244,26 @@ class KvSimulatorStore {
     this.data = this.load();
   }
 
+  private migrateStore(store: StoreConfig): StoreConfig {
+    return {
+      ...store,
+      owner_user_id: store.owner_user_id || store.store_id,
+      sections: normalizeStoreSections(store.sections),
+    };
+  }
+
   private load(): PersistedData {
     try {
       if (fs.existsSync(DATA_FILE)) {
         const raw = fs.readFileSync(DATA_FILE, 'utf-8');
         const parsed = JSON.parse(raw) as PersistedData;
         if (parsed && parsed.stores && parsed.deliveries) {
+          const mergedStores: Record<string, StoreConfig> = {};
+          for (const [k, v] of Object.entries({ ...SEED_DATA.stores, ...parsed.stores })) {
+            mergedStores[k] = this.migrateStore(v);
+          }
           return {
-            stores: { ...SEED_DATA.stores, ...parsed.stores },
+            stores: mergedStores,
             deliveries: { ...SEED_DATA.deliveries, ...parsed.deliveries },
             invoices: parsed.invoices || {},
             tokens: parsed.tokens || {},
@@ -269,13 +289,18 @@ class KvSimulatorStore {
   }
 
   listPublicStores(): StoreConfig[] {
-    return Object.values(this.data.stores).sort((a, b) =>
-      a.created_at < b.created_at ? 1 : -1
-    );
+    return Object.values(this.data.stores)
+      .map((s) => this.migrateStore(s))
+      .sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+  }
+
+  listStoresByOwner(ownerUserId: string): StoreConfig[] {
+    return this.listPublicStores().filter((s) => s.owner_user_id === ownerUserId);
   }
 
   getPublicStore(slug: string): StoreConfig | null {
-    return this.data.stores[`store:${slug}`] || null;
+    const store = this.data.stores[`store:${slug}`] || null;
+    return store ? this.migrateStore(store) : null;
   }
 
   hasStoreSlug(slug: string): boolean {
@@ -283,7 +308,7 @@ class KvSimulatorStore {
   }
 
   saveStore(publicConfig: StoreConfig, deliverySecrets: DeliverySecret[]): void {
-    this.data.stores[`store:${publicConfig.slug}`] = publicConfig;
+    this.data.stores[`store:${publicConfig.slug}`] = this.migrateStore(publicConfig);
     for (const secret of deliverySecrets) {
       this.data.deliveries[secret.key] = secret;
     }
@@ -329,9 +354,11 @@ class KvSimulatorStore {
     return this.data.invoices[`invoice:${invoiceId}`] || null;
   }
 
+  // Idempotent by invoice_id
   markInvoicePaid(invoiceId: string): {
     invoice: CheckoutInvoice;
     tokenRecord: DeliveryTokenRecord;
+    idempotent: boolean;
   } | null {
     const invoice = this.getInvoice(invoiceId);
     if (!invoice) return null;
@@ -339,7 +366,7 @@ class KvSimulatorStore {
     if (invoice.status === 'paid' && invoice.delivery_token) {
       const existingToken = this.data.tokens[`token:${invoice.delivery_token}`];
       if (existingToken) {
-        return { invoice, tokenRecord: existingToken };
+        return { invoice, tokenRecord: existingToken, idempotent: true };
       }
     }
 
@@ -354,9 +381,11 @@ class KvSimulatorStore {
       product_id: invoice.product_id,
       product_title: invoice.product_title,
       buyer_email: invoice.buyer_email,
-      r2_object_key: secret?.r2_object_key || `r2://nexusbyte-private/${invoice.store_id}/${invoice.product_id}.zip`,
+      r2_object_key: secret?.r2_object_key || `${invoice.store_id}/${invoice.product_id}.zip`,
       file_name: secret?.file_name || `${invoice.product_id}-bundle.zip`,
       delivery_note: secret?.delivery_note || 'Лицензионный архив и документация.',
+      downloads_used: 0,
+      max_downloads: 5,
       expires_at: expiresAt,
     };
 
@@ -364,12 +393,13 @@ class KvSimulatorStore {
     invoice.paid_at = new Date().toISOString();
     invoice.delivery_token = token;
     invoice.email_dispatched_to = invoice.buyer_email;
+    invoice.email_provider = 'resend';
 
     this.data.invoices[`invoice:${invoiceId}`] = invoice;
     this.data.tokens[`token:${token}`] = tokenRecord;
     this.persistSync();
 
-    return { invoice, tokenRecord };
+    return { invoice, tokenRecord, idempotent: false };
   }
 
   getDeliveryToken(token: string): DeliveryTokenRecord | null {
@@ -379,6 +409,20 @@ class KvSimulatorStore {
       return null;
     }
     return rec;
+  }
+
+  consumeDownloadAttempt(token: string): { ok: boolean; record?: DeliveryTokenRecord; reason?: string } {
+    const rec = this.getDeliveryToken(token);
+    if (!rec) {
+      return { ok: false, reason: 'expired_or_missing' };
+    }
+    if (rec.downloads_used >= rec.max_downloads) {
+      return { ok: false, reason: 'limit_reached' };
+    }
+    rec.downloads_used += 1;
+    this.data.tokens[`token:${token}`] = rec;
+    this.persistSync();
+    return { ok: true, record: rec };
   }
 }
 

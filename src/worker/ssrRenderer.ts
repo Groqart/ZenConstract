@@ -3,6 +3,7 @@ import {
   CheckoutInvoice,
   StoreConfig,
   formatProductCountLabel,
+  normalizeStoreSections,
   sanitizeSafeUrl,
 } from './storeSchema';
 
@@ -81,6 +82,49 @@ export function renderStorefrontHtml(store: StoreConfig, options: RenderOptions 
       `;
     })
     .join('');
+
+  const sections = normalizeStoreSections(store.sections);
+  const headerHtml = `<header class="store-header">
+      <div class="profile-wrap">
+        <div class="profile-top">
+          ${
+            safeAvatar
+              ? `<img class="avatar" src="${escapeHtml(safeAvatar)}" alt="${escapeHtml(store.profile.name)}" width="68" height="68" referrerpolicy="no-referrer" />`
+              : `<div class="avatar" aria-hidden="true"></div>`
+          }
+          <div>
+            <h1 class="store-title">${escapeHtml(store.meta.title)}</h1>
+            <p class="seller-line">${escapeHtml(store.profile.name)} · ${escapeHtml(store.slug)}.nexusbyte.de5.net</p>
+          </div>
+        </div>
+        <p class="seller-bio">${escapeHtml(store.profile.bio)}</p>
+      </div>
+      <a class="contact-btn" href="${escapeHtml(tgUrl)}" target="_blank" rel="noopener noreferrer">Связаться в Telegram</a>
+    </header>`;
+
+  const catalogHtml = `<section aria-labelledby="catalog-heading">
+      <div class="section-head">
+        <h2 id="catalog-heading" class="section-title">Цифровые товары</h2>
+        <span class="section-count">${escapeHtml(formatProductCountLabel(activeProducts.length))}</span>
+      </div>
+      <div class="grid">
+        ${productsMarkup}
+      </div>
+    </section>`;
+
+  const footerHtml = `<footer class="site-footer">
+      <span>${escapeHtml(store.meta.description)}</span>
+      <a href="${escapeHtml(homeUrl)}">Открыть конструктор NexusByte</a>
+    </footer>`;
+
+  const bodySectionsHtml = sections
+    .filter((sec) => sec.visible)
+    .map((sec) => {
+      if (sec.type === 'header') return headerHtml;
+      if (sec.type === 'product_grid') return catalogHtml;
+      return footerHtml;
+    })
+    .join('\n    ');
 
   return `<!doctype html>
 <html lang="ru">
@@ -165,38 +209,7 @@ export function renderStorefrontHtml(store: StoreConfig, options: RenderOptions 
 </head>
 <body>
   <main class="container">
-    <header class="store-header">
-      <div class="profile-wrap">
-        <div class="profile-top">
-          ${
-            safeAvatar
-              ? `<img class="avatar" src="${escapeHtml(safeAvatar)}" alt="${escapeHtml(store.profile.name)}" width="68" height="68" referrerpolicy="no-referrer" />`
-              : `<div class="avatar" aria-hidden="true"></div>`
-          }
-          <div>
-            <h1 class="store-title">${escapeHtml(store.meta.title)}</h1>
-            <p class="seller-line">${escapeHtml(store.profile.name)} · ${escapeHtml(store.slug)}.nexusbyte.de5.net</p>
-          </div>
-        </div>
-        <p class="seller-bio">${escapeHtml(store.profile.bio)}</p>
-      </div>
-      <a class="contact-btn" href="${escapeHtml(tgUrl)}" target="_blank" rel="noopener noreferrer">Связаться в Telegram</a>
-    </header>
-
-    <section aria-labelledby="catalog-heading">
-      <div class="section-head">
-        <h2 id="catalog-heading" class="section-title">Цифровые товары</h2>
-        <span class="section-count">${escapeHtml(formatProductCountLabel(activeProducts.length))}</span>
-      </div>
-      <div class="grid">
-        ${productsMarkup}
-      </div>
-    </section>
-
-    <footer class="site-footer">
-      <span>${escapeHtml(store.meta.description)}</span>
-      <a href="${escapeHtml(homeUrl)}">Открыть конструктор NexusByte</a>
-    </footer>
+    ${bodySectionsHtml}
   </main>
 
   <dialog id="checkoutDialog" class="checkout-modal" aria-labelledby="checkoutTitle">
@@ -320,7 +333,7 @@ export function renderInvoicePageHtml(invoice: CheckoutInvoice, store: StoreConf
   const isPaid = invoice.status === 'paid';
   const backUrl = `/s/${encodeURIComponent(store.slug)}`;
   const downloadHref = invoice.delivery_token
-    ? `/api/download/${encodeURIComponent(invoice.delivery_token)}`
+    ? `/download/${encodeURIComponent(invoice.delivery_token)}`
     : '#';
 
   return `<!doctype html>

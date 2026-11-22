@@ -94,6 +94,7 @@ export const RESERVED_SLUGS = new Set([
   'status',
   'pay',
   'checkout',
+  'download',
   'static',
   'assets',
   'docs',
@@ -111,6 +112,43 @@ export const SLUG_REGEX = /^[a-z0-9-]{3,32}$/;
 export const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 export const TELEGRAM_REGEX = /^[a-zA-Z0-9_]{3,32}$/;
 
+export type StoreSectionType = 'header' | 'product_grid' | 'footer';
+
+export interface StoreSection {
+  id: string;
+  type: StoreSectionType;
+  visible: boolean;
+}
+
+export const DEFAULT_STORE_SECTIONS: StoreSection[] = [
+  { id: 'sec_header', type: 'header', visible: true },
+  { id: 'sec_catalog', type: 'product_grid', visible: true },
+  { id: 'sec_footer', type: 'footer', visible: true },
+];
+
+export function normalizeStoreSections(sections?: StoreSection[] | null): StoreSection[] {
+  if (!Array.isArray(sections) || sections.length === 0) {
+    return DEFAULT_STORE_SECTIONS.map((s) => ({ ...s }));
+  }
+  const allowedTypes = new Set<StoreSectionType>(['header', 'product_grid', 'footer']);
+  const valid = sections
+    .filter((s) => s && typeof s.id === 'string' && allowedTypes.has(s.type))
+    .map((s) => ({
+      id: s.id.slice(0, 32),
+      type: s.type,
+      visible: Boolean(s.visible),
+    }));
+  if (valid.length === 0) {
+    return DEFAULT_STORE_SECTIONS.map((s) => ({ ...s }));
+  }
+  for (const def of DEFAULT_STORE_SECTIONS) {
+    if (!valid.some((s) => s.type === def.type)) {
+      valid.push({ ...def });
+    }
+  }
+  return valid;
+}
+
 export interface StoreProduct {
   id: string;
   is_active: boolean;
@@ -124,8 +162,10 @@ export interface StoreProduct {
 export interface StoreConfig {
   schema_version: 1;
   store_id: string;
+  owner_user_id: string;
   slug: string;
   created_at: string;
+  updated_at?: string;
   meta: {
     title: string;
     description: string;
@@ -138,6 +178,7 @@ export interface StoreConfig {
     avatar_url: string;
     telegram: string;
   };
+  sections?: StoreSection[];
   products: StoreProduct[];
 }
 
@@ -166,6 +207,7 @@ export interface CheckoutInvoice {
   paid_at?: string;
   delivery_token?: string;
   email_dispatched_to?: string;
+  email_provider?: 'resend';
 }
 
 export interface DeliveryTokenRecord {
@@ -178,11 +220,14 @@ export interface DeliveryTokenRecord {
   r2_object_key: string;
   file_name: string;
   delivery_note: string;
+  downloads_used: number;
+  max_downloads: number;
   expires_at: string;
 }
 
 export interface CreateProductInput {
   id?: string;
+  is_active?: boolean;
   title: string;
   short_desc: string;
   price_usdt: number;
@@ -190,6 +235,8 @@ export interface CreateProductInput {
   category: string;
   r2_object_key: string;
   delivery_note?: string;
+  file_name?: string;
+  file_size_mb?: number;
 }
 
 export interface CreateStoreInput {
@@ -206,6 +253,7 @@ export interface CreateStoreInput {
     avatar_url: string;
     telegram: string;
   };
+  sections?: StoreSection[];
   products: CreateProductInput[];
 }
 
@@ -257,7 +305,7 @@ export function sanitizeTelegramHandle(raw: string): string | null {
 export function sanitizeSafeUrl(raw: string): string | null {
   const trimmed = (raw || '').trim();
   if (!trimmed) return '';
-  if (trimmed.startsWith('/src/assets/')) {
+  if (trimmed.startsWith('/src/assets/') || trimmed.startsWith('/cdn/')) {
     return trimmed;
   }
   try {
@@ -304,7 +352,7 @@ export interface ValidationOutcome {
 
 export function validateStoreInput(
   input: CreateStoreInput,
-  options: { storeId?: string; createdAt?: string } = {}
+  options: { storeId?: string; ownerUserId?: string; createdAt?: string } = {}
 ): ValidationOutcome {
   const errors: Record<string, string> = {};
 
@@ -353,6 +401,7 @@ export function validateStoreInput(
   }
 
   const storeId = options.storeId || `usr_${Math.random().toString(36).slice(2, 8)}`;
+  const ownerUserId = options.ownerUserId || storeId;
   const publicProducts: StoreProduct[] = [];
   const deliverySecrets: DeliverySecret[] = [];
 
@@ -377,15 +426,15 @@ export function validateStoreInput(
     if (!safeCover) {
       errors[`products.${index}.cover_url`] = `Товар #${idx}: некорректный URL обложки.`;
     }
-    if (r2Key.length < 3 || r2Key.length > 200) {
-      errors[`products.${index}.r2_object_key`] = `Товар #${idx}: укажите путь архива в R2 или приватный ключ выдачи.`;
+    if (r2Key.length < 3 || r2Key.length > 220) {
+      errors[`products.${index}.r2_object_key`] = `Товар #${idx}: загрузите файл в PRIVATE_PRODUCTS_R2 или укажите R2-ключ.`;
     }
 
     const productId = (prod.id || '').trim() || `prod_${String(idx).padStart(2, '0')}`;
 
     publicProducts.push({
       id: productId,
-      is_active: true,
+      is_active: prod.is_active !== false,
       title: pTitle,
       short_desc: pDesc,
       price_usdt: Math.round(pPrice * 100) / 100,
@@ -399,8 +448,10 @@ export function validateStoreInput(
       product_id: productId,
       r2_object_key: r2Key,
       delivery_note: (prod.delivery_note || '').trim() || 'Инструкция по развёртыванию и лицензионный ключ внутри архива.',
-      file_name: `${productId}-${slugCheck.normalized || 'bundle'}.zip`,
-      file_size_mb: 4.2,
+      file_name: (prod.file_name || '').trim() || `${productId}-${slugCheck.normalized || 'bundle'}.zip`,
+      file_size_mb: Number.isFinite(Number(prod.file_size_mb)) && Number(prod.file_size_mb) > 0
+        ? Number(prod.file_size_mb)
+        : 4.2,
     });
   });
 
@@ -414,8 +465,10 @@ export function validateStoreInput(
     publicConfig: {
       schema_version: 1,
       store_id: storeId,
+      owner_user_id: ownerUserId,
       slug: slugCheck.normalized,
       created_at: options.createdAt || new Date().toISOString(),
+      updated_at: new Date().toISOString(),
       meta: {
         title,
         description,
@@ -428,6 +481,7 @@ export function validateStoreInput(
         avatar_url: safeAvatar || '',
         telegram: tg || '',
       },
+      sections: normalizeStoreSections(input.sections),
       products: publicProducts,
     },
     deliverySecrets,

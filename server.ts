@@ -1,7 +1,22 @@
+import crypto from 'crypto';
 import express from 'express';
 import fs from 'fs';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
+import {
+  DEMO_SELLERS,
+  completePrivatePresignedUpload,
+  createPrivatePresignedUpload,
+  getPrivateObjectBuffer,
+  getPublicAssetPath,
+  requireSellerAuth,
+  savePublicAssetToR2,
+  signHmacBody,
+  signSellerToken,
+  verifyHmacSignature,
+  type AuthedRequest,
+  type SellerUser,
+} from './src/server/authAndR2';
 import { kvStore } from './src/server/kvStore';
 import {
   extractSlugFromHost,
@@ -20,20 +35,160 @@ const PORT = 3000;
 
 async function startServer() {
   const app = express();
-  app.use(express.json({ limit: '1mb' }));
+
+  // Raw binary body parser specifically for presigned R2 uploads (up to 250 MB)
+  app.use(
+    '/api/r2/presigned-upload',
+    express.raw({ type: '*/*', limit: '250mb' })
+  );
+
+  app.use(express.json({ limit: '4mb' }));
 
   // Healthcheck
   app.get('/api/health', (_req, res) => {
-    res.json({ ok: true, service: 'nexusbyte-storefront-platform' });
+    res.json({ ok: true, service: 'nexusbyte-storefront-platform', sprint: 2 });
   });
 
-  // List public stores (strictly public store:{slug} JSON)
+  // --- Auth Endpoints (ZenxusBay Seller Session) ---
+  app.get('/api/auth/demo-accounts', (_req, res) => {
+    res.json({ accounts: DEMO_SELLERS });
+  });
+
+  app.post('/api/auth/login', (req, res) => {
+    const requestedId = typeof req.body?.user_id === 'string' ? req.body.user_id.trim() : '';
+    const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+    const name = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+
+    let user: SellerUser | undefined;
+    if (requestedId) {
+      user = DEMO_SELLERS.find((u) => u.user_id === requestedId);
+      if (!user) {
+        res.status(404).json({ error: 'Аккаунт продавца не найден.' });
+        return;
+      }
+    } else if (email && /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) {
+      const existingDemo = DEMO_SELLERS.find((u) => u.email === email);
+      if (existingDemo) {
+        user = existingDemo;
+      } else {
+        const hash = crypto.createHash('sha256').update(email).digest('hex').slice(0, 6);
+        user = {
+          user_id: `usr_${hash}`,
+          email,
+          name: name || email.split('@')[0],
+          role: 'seller',
+        };
+      }
+    } else {
+      res.status(400).json({ error: 'Укажите корректный email или выберите аккаунт продавца.' });
+      return;
+    }
+
+    const token = signSellerToken(user);
+    const stores = kvStore.listStoresByOwner(user.user_id);
+    res.json({ token, user, stores });
+  });
+
+  app.get('/api/auth/me', requireSellerAuth, (req: AuthedRequest, res) => {
+    const seller = req.seller!;
+    const stores = kvStore.listStoresByOwner(seller.user_id);
+    res.json({ user: seller, stores });
+  });
+
+  // --- R2 Dual-Contour Upload & CDN Endpoints ---
+  // 1. Public Assets R2 (<= 2 MB, .webp/.png/.jpg)
+  app.post('/api/r2/upload-public', requireSellerAuth, (req: AuthedRequest, res) => {
+    const seller = req.seller!;
+    const storeId = typeof req.body?.store_id === 'string' && req.body.store_id.trim()
+      ? req.body.store_id.trim()
+      : seller.user_id;
+    const fileName = typeof req.body?.file_name === 'string' ? req.body.file_name : '';
+    const dataBase64 = typeof req.body?.data_base64 === 'string' ? req.body.data_base64 : '';
+
+    const saved = savePublicAssetToR2({ storeId, fileName, dataBase64 });
+    if (!saved.ok) {
+      res.status(400).json({ error: saved.error });
+      return;
+    }
+
+    res.status(201).json({
+      url: saved.url,
+      cdn_preview_url: `https://cdn.nexusbyte.de5.net/${saved.objectKey}`,
+      object_key: saved.objectKey,
+      size_bytes: saved.sizeBytes,
+      cache_control: 'public, max-age=31536000, immutable',
+    });
+  });
+
+  // Serve PUBLIC_ASSETS_R2 CDN route with immutable edge cache headers
+  app.get('/cdn/:storeId/:fileName', (req, res) => {
+    const assetPath = getPublicAssetPath(
+      String(req.params.storeId || ''),
+      String(req.params.fileName || '')
+    );
+    if (!assetPath) {
+      res.status(404).send('Asset not found');
+      return;
+    }
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    res.setHeader('X-R2-Bucket', 'PUBLIC_ASSETS_R2');
+    res.sendFile(assetPath);
+  });
+
+  // 2. Private Products R2 Presigned Upload URL (up to 250 MB, bypasses Worker 100 MB limit)
+  app.post('/api/r2/presign-private', requireSellerAuth, (req: AuthedRequest, res) => {
+    const seller = req.seller!;
+    const storeId = typeof req.body?.store_id === 'string' && req.body.store_id.trim()
+      ? req.body.store_id.trim()
+      : seller.user_id;
+    const fileName = typeof req.body?.file_name === 'string' ? req.body.file_name : '';
+    const fileSizeBytes = Number(req.body?.file_size_bytes || 0);
+
+    const presign = createPrivatePresignedUpload({
+      storeId,
+      ownerUserId: seller.user_id,
+      fileName,
+      fileSizeBytes,
+    });
+
+    if (!presign.ok) {
+      res.status(400).json({ error: presign.error });
+      return;
+    }
+
+    res.json(presign);
+  });
+
+  app.put('/api/r2/presigned-upload/:uploadId', (req, res) => {
+    const uploadId = String(req.params.uploadId || '');
+    const sig = String(req.query.sig || '');
+    const bodyBuffer = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+
+    const outcome = completePrivatePresignedUpload({ uploadId, sig, bodyBuffer });
+    if (!outcome.ok) {
+      res.status(outcome.status).json({ error: outcome.error });
+      return;
+    }
+
+    res.status(200).json({
+      ok: true,
+      r2_object_key: outcome.r2_object_key,
+      file_name: outcome.file_name,
+      size_mb: outcome.size_mb,
+    });
+  });
+
+  // Block any direct public access to private bucket paths (DoD #1)
+  app.all('/r2-private/*', (_req, res) => {
+    res.status(403).json({ error: '403 Forbidden: PRIVATE_PRODUCTS_R2 access denied.' });
+  });
+
+  // --- Storefront CRUD & Inspection ---
   app.get('/api/stores', (_req, res) => {
     const stores = kvStore.listPublicStores();
     res.json({ stores });
   });
 
-  // Check subdomain slug format, reserved list, and availability
   app.get('/api/stores/check-slug', (req, res) => {
     const rawSlug = String(req.query.slug || '');
     const validation = validateSlug(rawSlug);
@@ -63,7 +218,6 @@ async function startServer() {
     });
   });
 
-  // KV propagation readiness probe
   app.get('/api/stores/:slug/ready', (req, res) => {
     const slug = String(req.params.slug || '').trim().toLowerCase();
     const store = kvStore.getPublicStore(slug);
@@ -74,7 +228,6 @@ async function startServer() {
     res.json({ ready: true, slug: store.slug, url: `/s/${store.slug}` });
   });
 
-  // Inspector endpoint returning public KV, isolated private delivery secrets, and SSR metrics
   app.get('/api/stores/:slug/inspect', (req, res) => {
     const slug = String(req.params.slug || '').trim().toLowerCase();
     const store = kvStore.getPublicStore(slug);
@@ -100,9 +253,13 @@ async function startServer() {
     });
   });
 
-  // 1-Click Publish Store
-  app.post('/api/stores', (req, res) => {
-    const validation = validateStoreInput(req.body);
+  // Protected Create Store (binds owner_user_id to authenticated seller)
+  app.post('/api/stores', requireSellerAuth, (req: AuthedRequest, res) => {
+    const seller = req.seller!;
+    const validation = validateStoreInput(req.body, {
+      storeId: seller.user_id,
+      ownerUserId: seller.user_id,
+    });
     if (!validation.ok || !validation.publicConfig || !validation.deliverySecrets) {
       res.status(400).json({
         error: 'Проверьте корректность заполнения формы.',
@@ -127,7 +284,47 @@ async function startServer() {
     });
   });
 
-  // Checkout endpoint: Server-side authoritative price lookup + PAYMENT_SERVICE simulation
+  // Protected Edit Store (403 Forbidden if store.owner_user_id !== seller.user_id)
+  app.put('/api/stores/:slug', requireSellerAuth, (req: AuthedRequest, res) => {
+    const seller = req.seller!;
+    const slug = String(req.params.slug || '').trim().toLowerCase();
+    const existing = kvStore.getPublicStore(slug);
+    if (!existing) {
+      res.status(404).json({ error: 'Магазин не найден.' });
+      return;
+    }
+    if (existing.owner_user_id !== seller.user_id) {
+      res.status(403).json({
+        error: `403 Forbidden: витрина «${slug}» принадлежит другому аккаунту.`,
+      });
+      return;
+    }
+
+    const validation = validateStoreInput(
+      { ...req.body, slug: existing.slug },
+      {
+        storeId: existing.store_id,
+        ownerUserId: existing.owner_user_id,
+        createdAt: existing.created_at,
+      }
+    );
+
+    if (!validation.ok || !validation.publicConfig || !validation.deliverySecrets) {
+      res.status(400).json({
+        error: 'Проверьте корректность заполнения формы.',
+        errors: validation.errors,
+      });
+      return;
+    }
+
+    kvStore.saveStore(validation.publicConfig, validation.deliverySecrets);
+    res.json({
+      store: validation.publicConfig,
+      ssr_url: `/s/${validation.publicConfig.slug}`,
+    });
+  });
+
+  // --- Checkout & HMAC-Protected Idempotent Fulfillment ---
   app.post('/api/checkout', (req, res) => {
     const parsed = validateCheckoutRequest(req.body);
     if (!parsed.ok || !parsed.product_id || !parsed.email) {
@@ -135,7 +332,6 @@ async function startServer() {
       return;
     }
 
-    // Resolve slug from Host header first (Cloudflare Worker pattern) or explicit slug in Studio preview
     const hostInfo = extractSlugFromHost(req.headers.host || '');
     const targetSlug = hostInfo.type === 'store' && hostInfo.slug ? hostInfo.slug : parsed.slug;
 
@@ -156,7 +352,6 @@ async function startServer() {
       return;
     }
 
-    // Security rule: ignore any client-supplied price; read price_usdt strictly from KV
     const invoice = kvStore.createInvoice({
       store,
       productId: product.id,
@@ -171,7 +366,6 @@ async function startServer() {
     });
   });
 
-  // Get invoice status
   app.get('/api/invoices/:invoiceId', (req, res) => {
     const invoice = kvStore.getInvoice(String(req.params.invoiceId || ''));
     if (!invoice) {
@@ -181,69 +375,168 @@ async function startServer() {
     res.json({ invoice });
   });
 
-  // PAYMENT_SERVICE webhook simulator -> generates 24h signed R2 delivery token & email payload
-  app.post('/api/payment/webhook', (req, res) => {
+  function buildFulfillmentResponse(invoiceId: string) {
+    const outcome = kvStore.markInvoicePaid(invoiceId);
+    if (!outcome) return null;
+    const downloadUrl = `/download/${outcome.tokenRecord.token}`;
+    return {
+      ok: true,
+      idempotent: outcome.idempotent,
+      invoice: outcome.invoice,
+      delivery: {
+        token: outcome.tokenRecord.token,
+        download_url: downloadUrl,
+        expires_at: outcome.tokenRecord.expires_at,
+        downloads_used: outcome.tokenRecord.downloads_used,
+        max_downloads: outcome.tokenRecord.max_downloads,
+        file_name: outcome.tokenRecord.file_name,
+        r2_object_key: outcome.tokenRecord.r2_object_key,
+        email_provider: 'resend',
+        email_preview: {
+          to: outcome.invoice.buyer_email,
+          subject: `Ваш цифровой товар: ${outcome.invoice.product_title}`,
+          body: `Оплата ${outcome.invoice.amount_usdt.toFixed(2)} USDT подтверждена (Resend API). Ссылка действует 24 часа (лимит ${outcome.tokenRecord.max_downloads} скачиваний): ${downloadUrl}`,
+        },
+      },
+    };
+  }
+
+  // Protected internal fulfillment endpoint (requires valid X-Payment-Signature HMAC)
+  app.post('/api/internal/fulfill', (req, res) => {
+    const sig = String(req.headers['x-payment-signature'] || '');
+    const rawBody = JSON.stringify(req.body || {});
+    if (!verifyHmacSignature(rawBody, sig)) {
+      res.status(403).json({ error: '403 Forbidden: invalid X-Payment-Signature HMAC.' });
+      return;
+    }
+
     const invoiceId = typeof req.body?.invoice_id === 'string' ? req.body.invoice_id.trim() : '';
     if (!invoiceId) {
       res.status(400).json({ error: 'Укажите invoice_id.' });
       return;
     }
 
-    const outcome = kvStore.markInvoicePaid(invoiceId);
-    if (!outcome) {
+    const result = buildFulfillmentResponse(invoiceId);
+    if (!result) {
       res.status(404).json({ error: 'Инвойс не найден.' });
       return;
     }
 
-    const downloadUrl = `/api/download/${outcome.tokenRecord.token}`;
-    res.json({
-      ok: true,
-      invoice: outcome.invoice,
-      delivery: {
-        token: outcome.tokenRecord.token,
-        download_url: downloadUrl,
-        expires_at: outcome.tokenRecord.expires_at,
-        file_name: outcome.tokenRecord.file_name,
-        r2_object_key: outcome.tokenRecord.r2_object_key,
-        email_preview: {
-          to: outcome.invoice.buyer_email,
-          subject: `Ваш цифровой товар: ${outcome.invoice.product_title}`,
-          body: `Оплата ${outcome.invoice.amount_usdt.toFixed(2)} USDT подтверждена. Ссылка на скачивание действует 24 часа: ${downloadUrl}`,
-        },
-      },
-    });
+    res.json(result);
   });
 
-  // Signed R2 delivery download endpoint
-  app.get('/api/download/:token', (req, res) => {
-    const token = String(req.params.token || '').trim();
-    const record = kvStore.getDeliveryToken(token);
-    if (!record) {
-      res.status(404).send('Ссылка для скачивания недействительна или истекла.');
+  // PAYMENT_SERVICE webhook bridge (signs HMAC internally and invokes idempotent fulfillment)
+  app.post('/api/payment/webhook', (req, res) => {
+    const invoiceId = typeof req.body?.invoice_id === 'string' ? req.body.invoice_id.trim() : '';
+    if (!invoiceId) {
+      res.status(400).json({ error: 'Укажите invoice_id.' });
+      return;
+    }
+    const payloadStr = JSON.stringify({ invoice_id: invoiceId });
+    const hmacSig = signHmacBody(payloadStr);
+    if (!verifyHmacSignature(payloadStr, hmacSig)) {
+      res.status(500).json({ error: 'Internal HMAC verification error.' });
       return;
     }
 
-    const safeFileName = record.file_name.replace(/[^a-zA-Z0-9._-]/g, '_');
-    const manifestContent = [
-      `NexusByte R2 Presigned Delivery Bundle`,
-      `======================================`,
-      `Order Invoice : ${record.invoice_id}`,
-      `Buyer Email   : ${record.buyer_email}`,
-      `Product       : ${record.product_title} (${record.product_id})`,
-      `Private R2 Key: ${record.r2_object_key}`,
-      `Expires At    : ${record.expires_at}`,
-      ``,
-      `Seller Delivery Note:`,
-      `${record.delivery_note}`,
-    ].join('\n');
+    const result = buildFulfillmentResponse(invoiceId);
+    if (!result) {
+      res.status(404).json({ error: 'Инвойс не найден.' });
+      return;
+    }
 
-    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-    res.setHeader('Content-Disposition', `attachment; filename="${safeFileName}.manifest.txt"`);
-    res.setHeader('Cache-Control', 'no-store');
-    res.send(manifestContent);
+    res.json({ ...result, hmac_verified: true });
   });
 
-  // Export Cloudflare Worker bundle code
+  // --- Range-Aware Private R2 Download (/download/:token & /api/download/:token) ---
+  function handleDownload(req: express.Request, res: express.Response) {
+    const token = String(req.params.token || '').trim();
+    const existing = kvStore.getDeliveryToken(token);
+    if (!existing) {
+      res.status(403).send('Ссылка недействительна или срок действия истёк.');
+      return;
+    }
+
+    const rangeHeader = req.headers.range;
+    const isHead = req.method === 'HEAD';
+    const isInitialOrFullGet =
+      !isHead && (!rangeHeader || rangeHeader.startsWith('bytes=0-'));
+
+    let activeRecord = existing;
+    if (isInitialOrFullGet) {
+      const consumed = kvStore.consumeDownloadAttempt(token);
+      if (!consumed.ok || !consumed.record) {
+        res.status(403).send('Исчерпан лимит скачиваний (5/5) или ссылка истекла.');
+        return;
+      }
+      activeRecord = consumed.record;
+    } else if (existing.downloads_used >= existing.max_downloads) {
+      res.status(403).send('Исчерпан лимит скачиваний (5/5).');
+      return;
+    }
+
+    const fallbackManifest = [
+      `NexusByte Private R2 Delivery Package`,
+      `====================================`,
+      `Invoice ID      : ${activeRecord.invoice_id}`,
+      `Buyer Email     : ${activeRecord.buyer_email}`,
+      `Product         : ${activeRecord.product_title} (${activeRecord.product_id})`,
+      `Private R2 Key  : ${activeRecord.r2_object_key}`,
+      `Downloads Used  : ${activeRecord.downloads_used} / ${activeRecord.max_downloads}`,
+      `Expires At      : ${activeRecord.expires_at}`,
+      ``,
+      `Delivery Note:`,
+      `${activeRecord.delivery_note}`,
+    ].join('\n');
+
+    const fileBuf = getPrivateObjectBuffer({
+      r2ObjectKey: activeRecord.r2_object_key,
+      fallbackText: fallbackManifest,
+    });
+
+    const safeFileName = activeRecord.file_name.replace(/[^a-zA-Z0-9._-]/g, '_');
+    const totalSize = fileBuf.length;
+
+    res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('Content-Disposition', `attachment; filename="${safeFileName}"`);
+    res.setHeader('X-Downloads-Remaining', String(Math.max(0, activeRecord.max_downloads - activeRecord.downloads_used)));
+
+    if (rangeHeader && rangeHeader.startsWith('bytes=')) {
+      const [startStr, endStr] = rangeHeader.replace('bytes=', '').split('-');
+      const start = Math.max(0, parseInt(startStr || '0', 10) || 0);
+      const end = endStr ? Math.min(totalSize - 1, parseInt(endStr, 10)) : totalSize - 1;
+      if (start >= totalSize || end < start) {
+        res.status(416).setHeader('Content-Range', `bytes */${totalSize}`).end();
+        return;
+      }
+      const chunk = fileBuf.subarray(start, end + 1);
+      res.status(206);
+      res.setHeader('Content-Range', `bytes ${start}-${end}/${totalSize}`);
+      res.setHeader('Content-Length', String(chunk.length));
+      if (isHead) {
+        res.end();
+      } else {
+        res.send(chunk);
+      }
+      return;
+    }
+
+    res.status(200);
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Length', String(totalSize));
+    if (isHead) {
+      res.end();
+    } else {
+      res.send(fileBuf);
+    }
+  }
+
+  app.get('/download/:token', handleDownload);
+  app.head('/download/:token', handleDownload);
+  app.get('/api/download/:token', handleDownload);
+  app.head('/api/download/:token', handleDownload);
+
   app.get('/api/worker-bundle', (_req, res) => {
     res.json({
       wrangler_toml: WORKER_WRANGLER_TOML,
@@ -302,7 +595,6 @@ async function startServer() {
     res.send(renderInvoicePageHtml(invoice, store));
   });
 
-  // Vite middleware in development or static dist in production
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },

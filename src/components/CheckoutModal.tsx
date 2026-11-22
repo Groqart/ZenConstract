@@ -6,8 +6,11 @@ interface DeliveryOutcome {
   token: string;
   download_url: string;
   expires_at: string;
+  downloads_used: number;
+  max_downloads: number;
   file_name: string;
   r2_object_key: string;
+  email_provider?: string;
   email_preview: {
     to: string;
     subject: string;
@@ -218,12 +221,17 @@ export function CheckoutModal({ slug, product, accentHex, onClose }: CheckoutMod
             </div>
 
             <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5 text-xs text-slate-600">
-              <div className="mb-1 flex items-center gap-1.5 font-medium text-slate-800">
-                <Mail className="h-3.5 w-3.5" />
-                <span>Получатель: {delivery.email_preview.to}</span>
+              <div className="mb-1 flex items-center justify-between gap-1.5 font-medium text-slate-800">
+                <span className="flex items-center gap-1.5">
+                  <Mail className="h-3.5 w-3.5" />
+                  <span>Resend → {delivery.email_preview.to}</span>
+                </span>
+                <span className="font-mono tabular-nums text-slate-500">
+                  Лимит: {delivery.max_downloads} ск.
+                </span>
               </div>
               <div className="truncate font-mono text-[11px] text-slate-500">
-                R2 Source: {delivery.r2_object_key}
+                PRIVATE_PRODUCTS_R2: {delivery.r2_object_key}
               </div>
             </div>
 

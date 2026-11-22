@@ -1,11 +1,28 @@
 import React, { useEffect, useState } from 'react';
-import { Check, Lock, Plus, ShieldAlert, Trash2 } from 'lucide-react';
+import {
+  ArrowDown,
+  ArrowUp,
+  Check,
+  Eye,
+  EyeOff,
+  Lock,
+  Plus,
+  ShieldAlert,
+  Trash2,
+  Upload,
+  UserCheck,
+} from 'lucide-react';
 import {
   ACCENT_PRESETS,
+  DEFAULT_STORE_SECTIONS,
+  normalizeStoreSections,
   type AccentPresetId,
+  type DeliverySecret,
   type StoreConfig,
+  type StoreSection,
   type ThemeMode,
 } from '../worker/storeSchema';
+import type { SellerAccount } from './SellerAuthModal';
 
 const COVER_GALLERY = [
   {
@@ -36,23 +53,40 @@ const COVER_GALLERY = [
 
 const DEFAULT_AVATAR = '/src/assets/images/avatar_alpha_dev_1795386901545.jpg';
 
+const SECTION_LABELS: Record<StoreSection['type'], string> = {
+  header: 'Шапка магазина и профиль',
+  product_grid: 'Сетка цифровых товаров',
+  footer: 'Подвал витрины',
+};
+
 interface ProductDraft {
+  id?: string;
+  is_active: boolean;
   title: string;
   short_desc: string;
   price_usdt: string;
   category: string;
   cover_url: string;
   r2_object_key: string;
+  file_name?: string;
+  file_size_mb?: number;
   delivery_note: string;
 }
 
 interface StoreBuilderProps {
+  authToken: string | null;
+  currentUser: SellerAccount | null;
+  ownedStores: StoreConfig[];
+  editingSlug: string | null;
+  onSelectEditingSlug: (slug: string | null) => void;
+  onRequireAuth: () => void;
   onStorePublished: (store: StoreConfig) => void;
 }
 
 function createEmptyProduct(index: number): ProductDraft {
   const cover = COVER_GALLERY[index % COVER_GALLERY.length].url;
   return {
+    is_active: true,
     title: '',
     short_desc: '',
     price_usdt: '29.00',
@@ -63,7 +97,26 @@ function createEmptyProduct(index: number): ProductDraft {
   };
 }
 
-export function StoreBuilder({ onStorePublished }: StoreBuilderProps) {
+function readFileAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('Не удалось прочитать файл.'));
+    reader.readAsDataURL(file);
+  });
+}
+
+export function StoreBuilder({
+  authToken,
+  currentUser,
+  ownedStores,
+  editingSlug,
+  onSelectEditingSlug,
+  onRequireAuth,
+  onStorePublished,
+}: StoreBuilderProps) {
+  const isEditing = Boolean(editingSlug);
+
   const [slug, setSlug] = useState('');
   const [slugStatus, setSlugStatus] = useState<{
     checking: boolean;
@@ -80,13 +133,89 @@ export function StoreBuilder({ onStorePublished }: StoreBuilderProps) {
   const [sellerBio, setSellerBio] = useState('');
   const [avatarUrl, setAvatarUrl] = useState(DEFAULT_AVATAR);
   const [telegram, setTelegram] = useState('');
-
+  const [sections, setSections] = useState<StoreSection[]>(DEFAULT_STORE_SECTIONS);
   const [products, setProducts] = useState<ProductDraft[]>([createEmptyProduct(0)]);
+
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [publishingPhase, setPublishingPhase] = useState<string | null>(null);
+  const [uploadingKey, setUploadingKey] = useState<string | null>(null);
+  const [uploadNotice, setUploadNotice] = useState<string | null>(null);
 
+  // Load store into form when switching to Edit Mode
   useEffect(() => {
+    if (!editingSlug) {
+      setSlug('');
+      setTitle('');
+      setDescription('');
+      setTheme('dark');
+      setAccentPreset('indigo');
+      setSellerName(currentUser?.name || '');
+      setSellerBio('');
+      setAvatarUrl(DEFAULT_AVATAR);
+      setTelegram('');
+      setSections(DEFAULT_STORE_SECTIONS.map((s) => ({ ...s })));
+      setProducts([createEmptyProduct(0)]);
+      setFieldErrors({});
+      setSubmitError(null);
+      return;
+    }
+
+    let active = true;
+    fetch(`/api/stores/${encodeURIComponent(editingSlug)}/inspect`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (!active || !data?.public_kv_value) return;
+        const st: StoreConfig = data.public_kv_value;
+        const deliveries: DeliverySecret[] = Array.isArray(data.private_deliveries)
+          ? data.private_deliveries
+          : [];
+        const delMap = new Map(deliveries.map((d) => [d.product_id, d]));
+
+        setSlug(st.slug);
+        setTitle(st.meta.title);
+        setDescription(st.meta.description);
+        setTheme(st.meta.theme);
+        setAccentPreset(st.meta.accent_preset);
+        setSellerName(st.profile.name);
+        setSellerBio(st.profile.bio);
+        setAvatarUrl(st.profile.avatar_url);
+        setTelegram(st.profile.telegram);
+        setSections(normalizeStoreSections(st.sections));
+        setProducts(
+          st.products.map((p) => {
+            const sec = delMap.get(p.id);
+            return {
+              id: p.id,
+              is_active: p.is_active,
+              title: p.title,
+              short_desc: p.short_desc,
+              price_usdt: p.price_usdt.toFixed(2),
+              category: p.category,
+              cover_url: p.cover_url,
+              r2_object_key: sec?.r2_object_key || `${st.store_id}/${p.id}.zip`,
+              file_name: sec?.file_name,
+              file_size_mb: sec?.file_size_mb,
+              delivery_note: sec?.delivery_note || '',
+            };
+          })
+        );
+        setFieldErrors({});
+        setSubmitError(null);
+      })
+      .catch(() => {});
+
+    return () => {
+      active = false;
+    };
+  }, [editingSlug, currentUser?.name]);
+
+  // Check slug availability only when creating a new store
+  useEffect(() => {
+    if (isEditing) {
+      setSlugStatus({ checking: false });
+      return;
+    }
     const trimmed = slug.trim().toLowerCase();
     if (!trimmed) {
       setSlugStatus({ checking: false });
@@ -109,41 +238,141 @@ export function StoreBuilder({ onStorePublished }: StoreBuilderProps) {
     }, 250);
 
     return () => clearTimeout(timer);
-  }, [slug]);
+  }, [slug, isEditing]);
 
   function handleFillDemo() {
+    onSelectEditingSlug(null);
     const suffix = Math.floor(100 + Math.random() * 899);
     setSlug(`edge-tools-${suffix}`);
     setTitle('Edge Tools — Скрипты и SDK');
     setDescription('Готовые модули для автоматизации Cloudflare Workers и парсинга данных.');
     setTheme('light');
     setAccentPreset('emerald');
-    setSellerName('Nordic Dev');
+    setSellerName(currentUser?.name || 'Nordic Dev');
     setSellerBio('Создаём производительные инструменты без лишних зависимостей.');
     setAvatarUrl(DEFAULT_AVATAR);
     setTelegram('nordic_dev_support');
+    setSections(DEFAULT_STORE_SECTIONS.map((s) => ({ ...s })));
     setProducts([
       {
+        is_active: true,
         title: 'KV Cache Warmer CLI',
         short_desc: 'Утилита прогрева Edge KV узлов перед запуском рекламных кампаний.',
         price_usdt: '34.00',
         category: 'Edge Workers',
         cover_url: COVER_GALLERY[2].url,
-        r2_object_key: `r2://nexusbyte-private/edge-tools-${suffix}/kv-warmer-v1.zip`,
+        r2_object_key: `${currentUser?.user_id || 'usr_demo'}/kv-warmer-v1.zip`,
         delivery_note: 'Инструкция по запуску через Wrangler CLI в README.md.',
       },
       {
+        is_active: true,
         title: 'R2 Signed Link Proxy',
         short_desc: 'Готовый воркер генерации временных ссылок выдачи цифровых архивов.',
         price_usdt: '59.00',
         category: 'Security & Delivery',
         cover_url: COVER_GALLERY[5].url,
-        r2_object_key: `r2://nexusbyte-private/edge-tools-${suffix}/r2-proxy-kit.zip`,
-        delivery_note: 'Сконфигурируйте бакет PRODUCTS_R2 и токен подписи.',
+        r2_object_key: `${currentUser?.user_id || 'usr_demo'}/r2-proxy-kit.zip`,
+        delivery_note: 'Сконфигурируйте бакет PRIVATE_PRODUCTS_R2 и токен подписи.',
       },
     ]);
     setFieldErrors({});
     setSubmitError(null);
+  }
+
+  async function handlePublicImageUpload(
+    file: File | undefined,
+    target: 'avatar' | number
+  ) {
+    if (!file) return;
+    if (!authToken) {
+      onRequireAuth();
+      return;
+    }
+    const keyLabel = target === 'avatar' ? 'avatar' : `cover-${target}`;
+    setUploadingKey(keyLabel);
+    setSubmitError(null);
+    setUploadNotice(null);
+
+    try {
+      const dataBase64 = await readFileAsBase64(file);
+      const res = await fetch('/api/r2/upload-public', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({
+          store_id: currentUser?.user_id || 'usr_public',
+          file_name: file.name,
+          data_base64: dataBase64,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Ошибка загрузки изображения в PUBLIC_ASSETS_R2.');
+      if (target === 'avatar') {
+        setAvatarUrl(data.url);
+      } else {
+        updateProduct(target, { cover_url: data.url });
+      }
+      setUploadNotice(`Загружено в PUBLIC_ASSETS_R2: ${data.cdn_preview_url} (immutable cache)`);
+    } catch (err) {
+      setSubmitError(err instanceof Error ? err.message : 'Ошибка загрузки.');
+    } finally {
+      setUploadingKey(null);
+    }
+  }
+
+  async function handlePrivateArchiveUpload(file: File | undefined, index: number) {
+    if (!file) return;
+    if (!authToken) {
+      onRequireAuth();
+      return;
+    }
+    setUploadingKey(`private-${index}`);
+    setSubmitError(null);
+    setUploadNotice(null);
+
+    try {
+      const presignRes = await fetch('/api/r2/presign-private', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({
+          store_id: currentUser?.user_id || 'usr_private',
+          file_name: file.name,
+          file_size_bytes: file.size,
+        }),
+      });
+      const presignData = await presignRes.json();
+      if (!presignRes.ok) {
+        throw new Error(presignData.error || 'Не удалось получить Presigned Upload URL.');
+      }
+
+      const uploadRes = await fetch(presignData.upload_url, {
+        method: 'PUT',
+        headers: { 'Content-Type': file.type || 'application/octet-stream' },
+        body: file,
+      });
+      const uploadResult = await uploadRes.json();
+      if (!uploadRes.ok) {
+        throw new Error(uploadResult.error || 'Ошибка прямой загрузки в PRIVATE_PRODUCTS_R2.');
+      }
+
+      updateProduct(index, {
+        r2_object_key: uploadResult.r2_object_key,
+        file_name: uploadResult.file_name,
+        file_size_mb: uploadResult.size_mb,
+      });
+      setUploadNotice(
+        `Архив «${uploadResult.file_name}» загружен в PRIVATE_PRODUCTS_R2 через Presigned URL.`
+      );
+    } catch (err) {
+      setSubmitError(err instanceof Error ? err.message : 'Ошибка загрузки архива.');
+    } finally {
+      setUploadingKey(null);
+    }
   }
 
   function updateProduct(index: number, patch: Partial<ProductDraft>) {
@@ -160,16 +389,50 @@ export function StoreBuilder({ onStorePublished }: StoreBuilderProps) {
     setProducts((prev) => prev.filter((_, i) => i !== index));
   }
 
+  function moveSection(index: number, delta: -1 | 1) {
+    const target = index + delta;
+    if (target < 0 || target >= sections.length) return;
+    setSections((prev) => {
+      const next = [...prev];
+      const [item] = next.splice(index, 1);
+      next.splice(target, 0, item);
+      return next;
+    });
+  }
+
+  function toggleSectionVisibility(index: number) {
+    setSections((prev) =>
+      prev.map((sec, i) => (i === index ? { ...sec, visible: !sec.visible } : sec))
+    );
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (!authToken) {
+      onRequireAuth();
+      return;
+    }
+
     setFieldErrors({});
     setSubmitError(null);
-    setPublishingPhase('Сохранение в KV (разделение публичной и приватной схем)...');
+    setPublishingPhase(
+      isEditing
+        ? 'Обновление конфигурации магазина в KV...'
+        : 'Сохранение в KV (привязка к owner_user_id)...'
+    );
+
+    const endpoint = isEditing
+      ? `/api/stores/${encodeURIComponent(editingSlug!)}`
+      : '/api/stores';
+    const method = isEditing ? 'PUT' : 'POST';
 
     try {
-      const res = await fetch('/api/stores', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const res = await fetch(endpoint, {
+        method,
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`,
+        },
         body: JSON.stringify({
           slug: slug.trim().toLowerCase(),
           meta: {
@@ -184,14 +447,18 @@ export function StoreBuilder({ onStorePublished }: StoreBuilderProps) {
             avatar_url: avatarUrl,
             telegram,
           },
+          sections,
           products: products.map((p, idx) => ({
-            id: `prod_${String(idx + 1).padStart(2, '0')}`,
+            id: p.id || `prod_${String(idx + 1).padStart(2, '0')}`,
+            is_active: p.is_active,
             title: p.title,
             short_desc: p.short_desc,
             price_usdt: Number(p.price_usdt),
             cover_url: p.cover_url,
             category: p.category,
             r2_object_key: p.r2_object_key,
+            file_name: p.file_name,
+            file_size_mb: p.file_size_mb,
             delivery_note: p.delivery_note,
           })),
         }),
@@ -205,18 +472,14 @@ export function StoreBuilder({ onStorePublished }: StoreBuilderProps) {
         return;
       }
 
-      // Poll KV propagation readiness as specified in Gap #3
       setPublishingPhase('Проверка репликации KV на Edge-узлах...');
-      await new Promise((resolve) => setTimeout(resolve, 600));
-      const readyRes = await fetch(`/api/stores/${encodeURIComponent(data.store.slug)}/ready`);
-      if (!readyRes.ok) {
-        await new Promise((resolve) => setTimeout(resolve, 900));
-      }
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      await fetch(`/api/stores/${encodeURIComponent(data.store.slug)}/ready`);
 
       setPublishingPhase(null);
       onStorePublished(data.store);
     } catch {
-      setSubmitError('Сетевая ошибка при публикации магазина.');
+      setSubmitError('Сетевая ошибка при сохранении магазина.');
       setPublishingPhase(null);
     }
   }
@@ -226,28 +489,73 @@ export function StoreBuilder({ onStorePublished }: StoreBuilderProps) {
 
   return (
     <div className="mx-auto max-w-[1360px] px-4 py-8 sm:px-6 lg:px-8">
-      <div className="mb-6 flex flex-col justify-between gap-4 border-b border-slate-200 pb-5 sm:flex-row sm:items-end">
+      {/* Seller Account & Store Mode Header */}
+      <div className="mb-6 flex flex-col justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-5 sm:flex-row sm:items-center">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-            Конструктор витрины за 1 клик
+          <h1 className="text-xl font-bold tracking-tight text-slate-900 sm:text-2xl">
+            {isEditing ? `Редактирование: ${editingSlug}` : 'Конструктор витрины за 1 клик'}
           </h1>
-          <p className="mt-1 text-sm text-slate-600">
-            Публичный конфиг записывается в <code className="rounded bg-slate-100 px-1.5 py-0.5 text-xs">store:slug</code>,
-            а приватные ссылки на R2-архивы изолируются в <code className="rounded bg-slate-100 px-1.5 py-0.5 text-xs">delivery:store_id:product_id</code>.
+          <p className="mt-1 text-xs text-slate-600 sm:text-sm">
+            {currentUser ? (
+              <span className="inline-flex items-center gap-1.5">
+                <UserCheck className="h-4 w-4 text-emerald-600" />
+                <span>
+                  Продавец: <strong className="text-slate-900">{currentUser.name}</strong> ({currentUser.user_id})
+                </span>
+              </span>
+            ) : (
+              'Войдите в аккаунт ZenxusBay, чтобы публиковать витрины, загружать файлы в R2 и редактировать товары.'
+            )}
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={handleFillDemo}
-          className="min-h-[44px] shrink-0 whitespace-nowrap rounded-lg border border-slate-300 bg-white px-4 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50"
-        >
-          Заполнить пример магазина
-        </button>
+        <div className="flex flex-wrap items-center gap-2.5">
+          {currentUser ? (
+            <>
+              <select
+                aria-label="Мои магазины"
+                value={editingSlug || '__new__'}
+                onChange={(e) =>
+                  onSelectEditingSlug(e.target.value === '__new__' ? null : e.target.value)
+                }
+                className="min-h-[42px] rounded-lg border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-900 focus:border-indigo-600 focus:outline-none"
+              >
+                <option value="__new__">+ Создать новый магазин</option>
+                {ownedStores.map((st) => (
+                  <option key={st.slug} value={st.slug}>
+                    Редактировать: {st.slug}
+                  </option>
+                ))}
+              </select>
+              {!isEditing && (
+                <button
+                  type="button"
+                  onClick={handleFillDemo}
+                  className="min-h-[42px] shrink-0 whitespace-nowrap rounded-lg border border-slate-300 bg-white px-3.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  Заполнить пример
+                </button>
+              )}
+            </>
+          ) : (
+            <button
+              type="button"
+              onClick={onRequireAuth}
+              className="min-h-[44px] shrink-0 whitespace-nowrap rounded-xl bg-indigo-600 px-4 text-sm font-semibold text-white hover:bg-indigo-700"
+            >
+              Войти как продавец
+            </button>
+          )}
+        </div>
       </div>
 
+      {uploadNotice && (
+        <div className="mb-6 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs font-medium text-emerald-900">
+          {uploadNotice}
+        </div>
+      )}
+
       <div className="grid grid-cols-1 gap-8 lg:grid-cols-12">
-        {/* Form Column */}
         <form onSubmit={handleSubmit} className="space-y-8 lg:col-span-7" noValidate>
           {submitError && (
             <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">
@@ -274,9 +582,10 @@ export function StoreBuilder({ onStorePublished }: StoreBuilderProps) {
                   id="store-slug"
                   type="text"
                   value={slug}
+                  disabled={isEditing}
                   onChange={(e) => setSlug(e.target.value)}
                   placeholder="my-scripts"
-                  className="min-h-[44px] flex-1 rounded-l-lg border border-r-0 border-slate-300 px-3.5 font-mono text-sm text-slate-900 focus:border-indigo-600 focus:outline-none"
+                  className="min-h-[44px] flex-1 rounded-l-lg border border-r-0 border-slate-300 px-3.5 font-mono text-sm text-slate-900 focus:border-indigo-600 focus:outline-none disabled:bg-slate-100 disabled:text-slate-500"
                 />
                 <span className="inline-flex items-center rounded-r-lg border border-slate-300 bg-slate-50 px-3 font-mono text-xs text-slate-600">
                   .nexusbyte.de5.net
@@ -284,25 +593,30 @@ export function StoreBuilder({ onStorePublished }: StoreBuilderProps) {
               </div>
 
               <div className="mt-2 min-h-[20px] text-xs">
-                {slugStatus.checking && <span className="text-slate-500">Проверка доступности...</span>}
-                {!slugStatus.checking && slugStatus.message && (
-                  <span className={slugStatus.available ? 'font-medium text-emerald-700' : 'font-medium text-red-600'}>
-                    {slugStatus.message}
+                {isEditing ? (
+                  <span className="text-slate-500">
+                    Привязан к владельцу {currentUser?.user_id}. Поддомен при редактировании не меняется.
                   </span>
-                )}
-                {!slugStatus.message && fieldErrors.slug && (
-                  <span className="font-medium text-red-600">{fieldErrors.slug}</span>
+                ) : (
+                  <>
+                    {slugStatus.checking && <span className="text-slate-500">Проверка доступности...</span>}
+                    {!slugStatus.checking && slugStatus.message && (
+                      <span className={slugStatus.available ? 'font-medium text-emerald-700' : 'font-medium text-red-600'}>
+                        {slugStatus.message}
+                      </span>
+                    )}
+                    {!slugStatus.message && fieldErrors.slug && (
+                      <span className="font-medium text-red-600">{fieldErrors.slug}</span>
+                    )}
+                  </>
                 )}
               </div>
-              <p className="mt-1 text-xs text-slate-500">
-                Зарезервированные имена (www, admin, api, cdn, app, pay) автоматически блокируются.
-              </p>
             </div>
           </section>
 
           {/* Section 2: Brand & Theme */}
           <section className="rounded-2xl border border-slate-200 bg-white p-6">
-            <h2 className="text-base font-semibold text-slate-900">2. Оформление и профиль продавца</h2>
+            <h2 className="text-base font-semibold text-slate-900">2. Оформление и аватар (PUBLIC_ASSETS_R2)</h2>
             <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="sm:col-span-2">
                 <label htmlFor="store-title" className="mb-1.5 block text-sm font-medium text-slate-800">
@@ -364,7 +678,7 @@ export function StoreBuilder({ onStorePublished }: StoreBuilderProps) {
 
               <div>
                 <span className="mb-1.5 block text-sm font-medium text-slate-800">
-                  Акцентный пресет (WCAG-контраст)
+                  Акцентный пресет
                 </span>
                 <div className="flex flex-wrap gap-2">
                   {Object.values(ACCENT_PRESETS).map((preset) => {
@@ -441,28 +755,98 @@ export function StoreBuilder({ onStorePublished }: StoreBuilderProps) {
 
               <div className="sm:col-span-2">
                 <label htmlFor="avatar-url" className="mb-1.5 block text-sm font-medium text-slate-800">
-                  URL аватара (R2 CDN или локальный ассет)
+                  Аватар (PUBLIC_ASSETS_R2 до 2 МБ или URL)
                 </label>
-                <input
-                  id="avatar-url"
-                  type="text"
-                  value={avatarUrl}
-                  onChange={(e) => setAvatarUrl(e.target.value)}
-                  className="min-h-[44px] w-full rounded-lg border border-slate-300 px-3.5 font-mono text-xs text-slate-900 focus:border-indigo-600 focus:outline-none"
-                />
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <input
+                    id="avatar-url"
+                    type="text"
+                    value={avatarUrl}
+                    onChange={(e) => setAvatarUrl(e.target.value)}
+                    className="min-h-[44px] flex-1 rounded-lg border border-slate-300 px-3.5 font-mono text-xs text-slate-900 focus:border-indigo-600 focus:outline-none"
+                  />
+                  <label className="inline-flex min-h-[44px] cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap rounded-lg border border-slate-300 bg-slate-50 px-3.5 text-xs font-semibold text-slate-800 hover:bg-slate-100">
+                    <Upload className="h-3.5 w-3.5" />
+                    <span>{uploadingKey === 'avatar' ? 'Загрузка...' : 'Загрузить фото'}</span>
+                    <input
+                      type="file"
+                      accept=".webp,.png,.jpg,.jpeg"
+                      className="sr-only"
+                      onChange={(e) => handlePublicImageUpload(e.target.files?.[0], 'avatar')}
+                    />
+                  </label>
+                </div>
               </div>
             </div>
           </section>
 
-          {/* Section 3: Products (1 to 10) */}
+          {/* Section 3: Sections (Sprint 3 Drag-and-Drop Prep) */}
+          <section className="rounded-2xl border border-slate-200 bg-white p-6">
+            <h2 className="text-base font-semibold text-slate-900">
+              3. Структура секций витрины (задел под Drag-and-Drop)
+            </h2>
+            <p className="mt-1 text-xs text-slate-500">
+              Управляйте порядком и видимостью секций <code className="rounded bg-slate-100 px-1">sections[]</code> в StoreConfig.
+            </p>
+            <div className="mt-4 space-y-2">
+              {sections.map((sec, idx) => (
+                <div
+                  key={sec.id}
+                  className="flex flex-col justify-between gap-2.5 rounded-xl border border-slate-200 bg-slate-50/70 px-4 py-3 sm:flex-row sm:items-center sm:gap-3"
+                >
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium text-slate-900">{SECTION_LABELS[sec.type]}</div>
+                    <div className="font-mono text-[11px] text-slate-500">
+                      {sec.id} · {sec.type}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => moveSection(idx, -1)}
+                      disabled={idx === 0}
+                      aria-label={`Поднять секцию ${SECTION_LABELS[sec.type]}`}
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-100 disabled:opacity-40"
+                    >
+                      <ArrowUp className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => moveSection(idx, 1)}
+                      disabled={idx === sections.length - 1}
+                      aria-label={`Опустить секцию ${SECTION_LABELS[sec.type]}`}
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 hover:bg-slate-100 disabled:opacity-40"
+                    >
+                      <ArrowDown className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => toggleSectionVisibility(idx)}
+                      aria-label={`Переключить видимость ${SECTION_LABELS[sec.type]}`}
+                      className={`inline-flex h-9 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium ${
+                        sec.visible
+                          ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                          : 'border-slate-200 bg-white text-slate-500'
+                      }`}
+                    >
+                      {sec.visible ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
+                      <span>{sec.visible ? 'Показана' : 'Скрыта'}</span>
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          {/* Section 4: Products (1 to 10) */}
           <section className="rounded-2xl border border-slate-200 bg-white p-6">
             <div className="flex items-center justify-between gap-4">
               <div>
                 <h2 className="text-base font-semibold text-slate-900">
-                  3. Цифровые товары ({products.length} / 10)
+                  4. Цифровые товары ({products.length} / 10)
                 </h2>
                 <p className="mt-0.5 text-xs text-slate-500">
-                  Поле «Ключ R2 / архив выдачи» сохраняется изолированно и никогда не попадает в HTML витрины.
+                  Архивы загружаются напрямую через Presigned URL в <code className="rounded bg-slate-100 px-1">PRIVATE_PRODUCTS_R2</code> (до 250 МБ).
                 </p>
               </div>
               <button
@@ -479,21 +863,36 @@ export function StoreBuilder({ onStorePublished }: StoreBuilderProps) {
             <div className="mt-5 space-y-6">
               {products.map((prod, idx) => (
                 <div key={idx} className="rounded-xl border border-slate-200 bg-slate-50/70 p-4">
-                  <div className="mb-3 flex items-center justify-between gap-2">
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                     <span className="text-xs font-semibold text-slate-700">
-                      Товар #{idx + 1} (prod_{String(idx + 1).padStart(2, '0')})
+                      Товар #{idx + 1} ({prod.id || `prod_${String(idx + 1).padStart(2, '0')}`})
                     </span>
-                    {products.length > 1 && (
+                    <div className="flex items-center gap-2">
                       <button
                         type="button"
-                        onClick={() => removeProduct(idx)}
-                        aria-label={`Удалить товар #${idx + 1}`}
-                        className="inline-flex min-h-[36px] items-center gap-1 rounded-md px-2 text-xs font-medium text-red-600 hover:bg-red-50"
+                        onClick={() => updateProduct(idx, { is_active: !prod.is_active })}
+                        className={`inline-flex min-h-[34px] items-center gap-1 rounded-md border px-2.5 text-xs font-medium ${
+                          prod.is_active
+                            ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                            : 'border-slate-300 bg-white text-slate-500'
+                        }`}
                       >
-                        <Trash2 className="h-3.5 w-3.5" />
-                        <span>Удалить</span>
+                        {prod.is_active ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
+                        <span>{prod.is_active ? 'Активен' : 'Скрыт'}</span>
                       </button>
-                    )}
+
+                      {products.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => removeProduct(idx)}
+                          aria-label={`Удалить товар #${idx + 1}`}
+                          className="inline-flex min-h-[34px] items-center gap-1 rounded-md px-2 text-xs font-medium text-red-600 hover:bg-red-50"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                          <span>Удалить</span>
+                        </button>
+                      )}
+                    </div>
                   </div>
 
                   <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
@@ -572,20 +971,43 @@ export function StoreBuilder({ onStorePublished }: StoreBuilderProps) {
                         htmlFor={`prod-cover-${idx}`}
                         className="mb-1 block text-xs font-medium text-slate-700"
                       >
-                        Обложка (WebP/JPEG)
+                        Обложка (PUBLIC_ASSETS_R2 ≤ 2 МБ)
                       </label>
-                      <select
-                        id={`prod-cover-${idx}`}
-                        value={prod.cover_url}
-                        onChange={(e) => updateProduct(idx, { cover_url: e.target.value })}
-                        className="min-h-[42px] w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:border-indigo-600 focus:outline-none"
-                      >
-                        {COVER_GALLERY.map((c) => (
-                          <option key={c.url} value={c.url}>
-                            Студийная обложка: {c.label}
-                          </option>
-                        ))}
-                      </select>
+                      <div className="flex gap-1.5">
+                        <select
+                          id={`prod-cover-${idx}`}
+                          value={
+                            COVER_GALLERY.some((c) => c.url === prod.cover_url)
+                              ? prod.cover_url
+                              : '__custom__'
+                          }
+                          onChange={(e) => {
+                            if (e.target.value !== '__custom__') {
+                              updateProduct(idx, { cover_url: e.target.value });
+                            }
+                          }}
+                          className="min-h-[42px] min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-2.5 text-xs text-slate-900 focus:border-indigo-600 focus:outline-none"
+                        >
+                          {COVER_GALLERY.map((c) => (
+                            <option key={c.url} value={c.url}>
+                              Студия: {c.label}
+                            </option>
+                          ))}
+                          {!COVER_GALLERY.some((c) => c.url === prod.cover_url) && (
+                            <option value="__custom__">R2 CDN: {prod.cover_url}</option>
+                          )}
+                        </select>
+                        <label className="inline-flex min-h-[42px] shrink-0 cursor-pointer items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-100">
+                          <Upload className="h-3.5 w-3.5" />
+                          <span>{uploadingKey === `cover-${idx}` ? '...' : 'R2'}</span>
+                          <input
+                            type="file"
+                            accept=".webp,.png,.jpg,.jpeg"
+                            className="sr-only"
+                            onChange={(e) => handlePublicImageUpload(e.target.files?.[0], idx)}
+                          />
+                        </label>
+                      </div>
                     </div>
 
                     <div>
@@ -594,16 +1016,28 @@ export function StoreBuilder({ onStorePublished }: StoreBuilderProps) {
                         className="mb-1 flex items-center gap-1 text-xs font-medium text-slate-700"
                       >
                         <Lock className="h-3 w-3 text-amber-600" />
-                        <span>Приватный R2-ключ выдачи</span>
+                        <span>Архив (PRIVATE_PRODUCTS_R2 ≤ 250 МБ)</span>
                       </label>
-                      <input
-                        id={`prod-r2-${idx}`}
-                        type="text"
-                        value={prod.r2_object_key}
-                        onChange={(e) => updateProduct(idx, { r2_object_key: e.target.value })}
-                        placeholder="r2://nexusbyte-private/usr_id/archive.zip"
-                        className="min-h-[42px] w-full rounded-lg border border-slate-300 bg-white px-3 font-mono text-xs text-slate-900 focus:border-indigo-600 focus:outline-none"
-                      />
+                      <div className="flex gap-1.5">
+                        <input
+                          id={`prod-r2-${idx}`}
+                          type="text"
+                          value={prod.r2_object_key}
+                          onChange={(e) => updateProduct(idx, { r2_object_key: e.target.value })}
+                          placeholder="usr_id/archive.zip"
+                          className="min-h-[42px] min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-2.5 font-mono text-xs text-slate-900 focus:border-indigo-600 focus:outline-none"
+                        />
+                        <label className="inline-flex min-h-[42px] shrink-0 cursor-pointer items-center gap-1 rounded-lg border border-amber-300 bg-amber-50 px-2.5 text-xs font-semibold text-amber-900 hover:bg-amber-100">
+                          <Upload className="h-3.5 w-3.5" />
+                          <span>{uploadingKey === `private-${idx}` ? '...' : 'Файл'}</span>
+                          <input
+                            type="file"
+                            accept=".zip,.tar.gz,.pdf"
+                            className="sr-only"
+                            onChange={(e) => handlePrivateArchiveUpload(e.target.files?.[0], idx)}
+                          />
+                        </label>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -616,7 +1050,8 @@ export function StoreBuilder({ onStorePublished }: StoreBuilderProps) {
             disabled={Boolean(publishingPhase)}
             className="min-h-[48px] w-full rounded-xl bg-indigo-600 px-6 py-3 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 disabled:opacity-60"
           >
-            {publishingPhase || 'Опубликовать за 1 клик'}
+            {publishingPhase ||
+              (isEditing ? 'Сохранить изменения витрины' : 'Опубликовать за 1 клик')}
           </button>
         </form>
 
@@ -689,21 +1124,17 @@ export function StoreBuilder({ onStorePublished }: StoreBuilderProps) {
             <div className="rounded-2xl border border-slate-200 bg-white p-6">
               <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-900">
                 <ShieldAlert className="h-4 w-4 text-indigo-600" />
-                <span>Заложенные гарантии ТЗ №1</span>
+                <span>Инфраструктура Спринта 2</span>
               </div>
               <ul className="space-y-2.5 text-xs leading-relaxed text-slate-600">
                 <li>
-                  <strong className="text-slate-900">Разделение KV:</strong> публичный ключ{' '}
-                  <code className="rounded bg-slate-100 px-1">store:slug</code> не содержит ссылок на скачивание.
+                  <strong className="text-slate-900">Два R2-бакета:</strong> публичные картинки кэшируются на CDN, а архивы до 250 МБ грузятся по <code className="rounded bg-slate-100 px-1">Presigned URL</code> в обход лимита Worker 100 МБ.
                 </li>
                 <li>
-                  <strong className="text-slate-900">Защита от подмены цены:</strong>{' '}
-                  <code className="rounded bg-slate-100 px-1">POST /api/checkout</code> берёт{' '}
-                  <code className="rounded bg-slate-100 px-1">price_usdt</code> только на сервере.
+                  <strong className="text-slate-900">Проверка прав (owner_user_id):</strong> попытка изменить чужой <code className="rounded bg-slate-100 px-1">slug</code> возвращает <code className="rounded bg-slate-100 px-1">403 Forbidden</code>.
                 </li>
                 <li>
-                  <strong className="text-slate-900">Безопасный CSS:</strong> используются только проверенные
-                  пресеты <code className="rounded bg-slate-100 px-1">accent_preset</code> и полное HTML-экранирование.
+                  <strong className="text-slate-900">Выдача и Resend:</strong> <code className="rounded bg-slate-100 px-1">/download/:token</code> поддерживает <code className="rounded bg-slate-100 px-1">Range</code> (206 Partial Content), лимит 5 скачиваний и идемпотентность по <code className="rounded bg-slate-100 px-1">invoice_id</code>.
                 </li>
               </ul>
             </div>
